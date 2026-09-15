@@ -1,0 +1,41 @@
+# Keil MDK build artifacts
+*.uvguix.*
+*.bak
+*.log
+*.lst
+*.map
+*.htm
+*.sct
+*.crf
+*.d
+*.o
+*.dep
+*.lnp
+*.tra
+*.sel
+*.iex
+*.axf
+*.hex
+*.bin
+*.dump
+*.elf
+*.out
+*.build_log.htm
+
+# Keil output folders
+**/RTE/
+**/Objects/
+**/Listings/
+**/JLinkLog.txt
+**/JLinkSettings.ini
+**/DebugConfig/
+
+# CMake / local build
+/build/
+
+# Editors
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo

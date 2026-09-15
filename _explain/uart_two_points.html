@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>串口按行说明对照（全部）</title>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --paper: #fffcf6;
+      --ink: #1c1915;
+      --muted: #6b6458;
+      --line: #ddd6c8;
+      --old: #8a3b12;
+      --old-bg: #f8ebe3;
+      --now: #1f5c4d;
+      --now-bg: #e7f3ee;
+      --pkt1: #c45c26;
+      --pkt2: #2f6f9f;
+      --warn: #b42318;
+      --ok: #1f7a4d;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font: 16px/1.65 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    header {
+      padding: 28px 20px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--paper);
+    }
+    header .wrap, main { max-width: 1080px; margin: 0 auto; }
+    h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: -0.02em; }
+    .lead { color: var(--muted); margin: 0; max-width: 46em; }
+    nav {
+      display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px;
+    }
+    nav a {
+      color: var(--ink); text-decoration: none;
+      border: 1px solid var(--line); background: #fff;
+      padding: 6px 12px; border-radius: 999px; font-size: 14px;
+    }
+    nav a:hover { border-color: var(--ink); }
+    main { padding: 24px 20px 64px; }
+    section { margin-bottom: 48px; }
+    h2 {
+      font-size: 20px; margin: 0 0 14px;
+      padding-bottom: 8px; border-bottom: 2px solid var(--ink);
+    }
+    h3 { font-size: 15px; margin: 18px 0 8px; }
+    .pair {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    }
+    @media (max-width: 820px) { .pair { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--paper); border: 1px solid var(--line);
+      border-radius: 10px; padding: 14px 16px;
+    }
+    .card.old { border-top: 4px solid var(--old); }
+    .card.now { border-top: 4px solid var(--now); }
+    .tag {
+      display: inline-block; font-size: 12px; font-weight: 700;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .old .tag { color: var(--old); }
+    .now .tag { color: var(--now); }
+    .card p { margin: 0 0 8px; }
+    .card p:last-child { margin-bottom: 0; }
+    .quote {
+      background: var(--old-bg); color: #4a2414;
+      padding: 10px 12px; border-radius: 6px;
+      font-size: 14px; line-height: 1.55;
+      white-space: pre-wrap;
+    }
+    .now-box {
+      background: var(--now-bg); padding: 10px 12px; border-radius: 6px;
+      font-size: 14px;
+    }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    button {
+      font: inherit; cursor: pointer; border: 1px solid var(--ink);
+      background: var(--ink); color: #fff; padding: 7px 14px; border-radius: 6px;
+    }
+    button.ghost { background: #fff; color: var(--ink); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .step-label {
+      font-weight: 700; font-size: 15px; margin: 12px 0 8px;
+    }
+    .vars {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px; margin: 10px 0 14px;
+    }
+    .var {
+      border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+      background: #fff; font-size: 13px;
+    }
+    .var b { display: block; font-size: 12px; color: var(--muted); font-weight: 600; }
+    .var .v { font-family: Consolas, "Cascadia Mono", monospace; font-size: 18px; }
+    .var.stale { outline: 2px solid var(--pkt1); }
+    .var.fresh { outline: 2px solid var(--pkt2); }
+    .var.bad { outline: 2px solid var(--warn); background: #fdecea; }
+    .tape {
+      display: flex; gap: 2px; flex-wrap: wrap;
+      background: #fff; border: 1px solid var(--line);
+      border-radius: 8px; padding: 8px;
+    }
+    .cell {
+      width: 28px; height: 42px; border-radius: 4px;
+      background: #ece7dc; color: #7a7366;
+      font: 10px/1 Consolas, monospace;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    .cell .idx { opacity: 0.7; }
+    .cell .ch { font-size: 12px; font-weight: 700; }
+    .cell.p1 { background: #f3c7a8; color: #6a2e10; }
+    .cell.p2 { background: #b9d4ea; color: #16324c; }
+    .cell.copy { box-shadow: inset 0 0 0 2px var(--warn); }
+    .cell.miss { outline: 2px dashed #2f6f9f; outline-offset: -2px; }
+    .cell.want { outline: 2px solid var(--ok); outline-offset: -2px; }
+    .cell.oob { background: #f4c7c3; color: #7a1f16; }
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 820px) { .cols { grid-template-columns: 1fr; } }
+    .mini { font-size: 13px; margin: 0 0 8px; color: var(--muted); }
+    .frames { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 820px) { .frames { grid-template-columns: 1fr; } }
+    .frame-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+    .bar {
+      height: 36px; display: flex; align-items: center; justify-content: center;
+      font: 13px Consolas, monospace; border-radius: 4px; margin: 4px 0;
+    }
+    .bar.alive { background: #c8ead7; }
+    .bar.dead { background: #f4c7c3; }
+    .bar.dma { background: #1c1915; color: #f4f1ea; font-size: 12px; }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+    .sw { width: 12px; height: 12px; display: inline-block; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+    .call {
+      margin-top: 12px; padding: 12px; border-radius: 8px;
+      font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px;
+      background: #1c1915; color: #f4f1ea;
+    }
+    .call .bad { color: #ffb4a8; }
+    .call .ok { color: #7ddea0; }
+    .call .cmt { color: #b8b09f; }
+    table { width: 100%; border-collapse: collapse; background: var(--paper); }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { font-size: 13px; color: var(--muted); font-weight: 600; }
+    .ok-cell { color: var(--ok); font-weight: 700; }
+    .bad-cell { color: var(--warn); font-weight: 700; }
+    .stack {
+      display: grid; grid-template-columns: 88px 1fr; gap: 0;
+      border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+      background: #fff; max-width: 520px;
+    }
+    .stack .addr {
+      background: #ece7dc; padding: 10px; font: 12px Consolas, monospace; color: var(--muted);
+      border-bottom: 1px solid var(--line);
+    }
+    .stack .blk {
+      padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 14px;
+    }
+    .stack .blk.keep { background: var(--now-bg); }
+    .stack .blk.die { background: var(--old-bg); }
+    .note { font-size: 13px; color: var(--muted); margin-top: 8px; }
+    footer { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>串口按行说明对照（全部）</h1>
+      <p class="lead">上次按行讲完之后，你说后面也都没看懂。这里把那一整段拆开，不只有前两处。工程代码没改。</p>
+      <nav>
+        <a href="#p1">1. return 30 窗口错位</a>
+        <a href="#p2">2. str 在栈上</a>
+        <a href="#p3">3. 临时缓冲才是 DMA 的坑</a>
+        <a href="#p4">4. 环形缓冲跨边界 memcpy</a>
+        <a href="#p5">5. 忙丢包、flag 被盖</a>
+        <a href="#p6">6. UART5 / USART6 中断两套</a>
+        <a href="#p7">7. 上拉、FIFO、LED</a>
+      </nav>
+    </div>
+  </header>
+  <main>
+    <section id="p1">
+      <h2>问题 1：ISR 写 10，后来怎么变成拷 30 字节</h2>
+      <div class="pair">
+        <article class="card old">
+          <div class="tag">上次你没看懂的原文</div>
+          <div class="quote">ISR 写 rx_len=10，last_pos=10
+任务关中断，局部 len=10，last=10，开中断
+ISR 再进，rx_len=30，last_pos=40
+任务用旧的 last/len 算出 start=0，却 return 30
+调用方按 30 字节去拷，多拷 20 字节垃圾</div>
+        </article>
+        <article class="card now">
+          <div class="tag">这次对应在讲什么</div>
+          <div class="now-box">
+            任务拍了张<strong>复印件</strong>（局部 last / len），用复印件算起点，所以 start=0。<br />
+            但 <code>return uart5_rx_len</code> 拿的是墙上的<strong>原件</strong>，已经被 ISR 改成 30。<br />
+            从图上看：长度按第二包（30），起点却还在第一包头（0）。<br />
+            相对第二包该拷的 10～39：<strong>前面把第一包带进去了，后面 30～39 没拷到</strong>。
+          </div>
+        </article>
+      </div>
+
+      <h3>按时刻点播放（对应上面那 5 行）</h3>
+      <div class="row">
+        <button id="prev" class="ghost">上一时刻</button>
+        <button id="next">下一时刻</button>
+        <span id="stepTitle" class="step-label"></span>
+      </div>
+      <p id="stepText"></p>
+      <div class="vars">
+        <div class="var" id="gLast"><b>墙上原件 uart5_last_pos</b><div class="v" id="gLastV">0</div></div>
+        <div class="var" id="gLen"><b>墙上原件 uart5_rx_len</b><div class="v" id="gLenV">0</div></div>
+        <div class="var" id="lLast"><b>任务复印件 last</b><div class="v" id="lLastV">（还没拍）</div></div>
+        <div class="var" id="lLen"><b>任务复印件 len</b><div class="v" id="lLenV">（还没拍）</div></div>
+      </div>
+      <div class="tape" id="tape"></div>
+      <div class="legend">
+        <span><i class="sw" style="background:#f3c7a8"></i>第一包 10 字节（A）</span>
+        <span><i class="sw" style="background:#b9d4ea"></i>第二包 30 字节（B）</span>
+        <span><i class="sw" style="box-shadow:inset 0 0 0 2px #b42318;background:#fff"></i>红框：实际拷走 0～29</span>
+        <span><i class="sw" style="box-shadow:inset 0 0 0 2px dashed #2f6f9f;background:#fff"></i>蓝虚线：第二包尾巴 30～39，没拷到</span>
+      </div>
+      <div class="call" id="callout"></div>
+    </section>
+
+    <section id="p2">
+      <h2>问题 2：L162 的 str 在任务栈上，有问题吗</h2>
+      <div class="pair">
+        <article class="card old">
+          <div class="tag">上次你没看懂的原文</div>
+          <div class="quote">L162：str 在任务栈上。
+L175：HAL_UART_Transmit_DMA 只记下这个指针就返回。DMA 是硬件稍后从内存搬。
+若调度把这个任务栈切走、或后面局部变量盖掉这块，发出去的就是乱数据。这次发生在 while(1) 之前，str 作用域覆盖整个任务，比下面两个临时缓冲稍好，但 DMA 仍要求源地址在 DMA 完成前一直有效。</div>
+        </article>
+        <article class="card now">
+          <div class="tag">这次对应在讲什么</div>
+          <div class="now-box">
+            <strong>切走任务没事；退出任务就有事。</strong><br />
+            调度切到别的任务，这块栈还占着，str 还在。这点和上次说的不一样。<br />
+            但 str 住在 uart_task 的栈上。<strong>任务 return、被删除、栈被回收，这块就没了。</strong> DMA 若还在发 Hello，一样是读已经无效的内存。<br />
+            现在 while(1) 不退出，所以这次 Hello 碰巧没事。不是「在栈上就永远安全」。
+          </div>
+        </article>
+      </div>
+
+      <h3>任务栈长什么样（从上往下是「后进的局部变量」）</h3>
+      <div class="stack">
+        <div class="addr">高地址</div>
+        <div class="blk">（栈顶方向，后来的局部变量往这边长）</div>
+        <div class="addr">if 块内</div>
+        <div class="blk die"><strong>uart5_temp_buf[256]</strong><br />花括号要结束前，必须先等 DMA 发完或关掉 DMA。现在没关就出 } ，DMA 还在读 → 有事</div>
+        <div class="addr">函数开头</div>
+        <div class="blk keep"><strong>str[] = "Hello DMA World!"</strong><br />和 uart_task 同寿。while(1) 不退出 → 这次碰巧没事。<strong>任务一退出，栈回收，DMA 若还开着就有事。</strong></div>
+        <div class="addr">低地址</div>
+        <div class="blk">任务栈底（切换到别的任务，这块内存仍占着）</div>
+      </div>
+      <p class="note">切任务 ≠ 拆栈。退出任务 / 函数 return = 拆栈。DMA 还开着时，这块内存不能先没。</p>
+
+      <h3>对照表</h3>
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>str（L162）</th>
+            <th>uart5_temp_buf（L184）</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>住在哪</td>
+            <td>任务栈</td>
+            <td>任务栈（同一个）</td>
+          </tr>
+          <tr>
+            <td>活多久</td>
+            <td>整个 uart_task。任务退出就没了</td>
+            <td>那个 if { } 一结束就死</td>
+          </tr>
+          <tr>
+            <td>切到别的任务会不会消失</td>
+            <td class="ok-cell">不会</td>
+            <td class="ok-cell">也不会（这件事上次说错了）</td>
+          </tr>
+          <tr>
+            <td>DMA 还在发时，这块还在不在</td>
+            <td class="ok-cell">在</td>
+            <td class="bad-cell">经常已经不在了</td>
+          </tr>
+          <tr>
+            <td>结论</td>
+            <td>任务不退出才没事；退出且 DMA 没关就有事</td>
+            <td class="bad-cell">出 } 前没关 DMA，有事</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="p3">
+      <h2>3. 真正有事的是 uart5_temp_buf，不是 str</h2>
+      <div class="pair">
+        <article class="card old">
+          <div class="tag">上次按行原文（你说下面都没看懂）</div>
+          <div class="quote">L184：uart5_temp_buf 是这个 if 的栈数组。
+L191：从 DMA 环形缓冲拷到栈。
+L197：把栈地址交给 DMA。
+L199：} 结束，uart5_temp_buf 生命周期结束。
+L197 的 DMA 通常还没搬完。下一次进循环、或 L208 再开一个 256 字节栈数组，会盖掉这块。USART6 发出去的是已经释放的栈。
+L208–211：和 L184–197 相同。</div>
+        </article>
+        <article class="card now">
+          <div class="tag">这次对应在讲什么</div>
+          <div class="now-box">
+            DMA 发送<strong>不拷贝内容</strong>，只记下指针，硬件过一会儿自己来读。<br />
+            <code>str</code> 现在碰巧没事，只因为任务没退出。<br />
+            <code>uart5_temp_buf</code> 在 <code>if { }</code> 里。<strong>这块要失效之前，必须先让 DMA 停：等 Tx 完成，或 Abort/关掉 DMA。</strong> 现在 L199 的 } 直接出去了，DMA 还开着，等于拆掉正在读的内存。          </div>
+        </article>
+      </div>
+      <h3>同一条栈，两个时刻</h3>
+      <div class="frames">
+        <div class="card">
+          <div class="frame-title">时刻 1：还在 if 里面（L197 刚调用）</div>
+          <div class="bar alive">uart5_temp_buf = "ABC..." 还在</div>
+          <div class="bar dma">DMA 正在（或即将）从这里读</div>
+          <p class="mini">指针有效。这一瞬间是对的。</p>
+        </div>
+        <div class="card">
+          <div class="frame-title">时刻 2：L199 的 } 已经执行</div>
+          <div class="bar dead">uart5_temp_buf 已经死了</div>
+          <div class="bar dma">DMA 还在读同一个地址</div>
+          <p class="mini">错在这里：缓冲已经死了，DMA 没关。正确顺序是先等发完或 Abort，再出 }。</p>
+        </div>
+      </div>
+      <p class="note">规则就一句：DMA 还开着，源地址就不能先失效。任务退出、花括号结束，都算失效。要结束这块内存，先关上 DMA。</p>
+    </section>
+
+    <section id="p4">
+      <h2>4. 环形缓冲跨边界，连续 memcpy 会拷错</h2>
+      <div class="pair">
+        <article class="card old">
+          <div class="tag">上次按行原文</div>
+          <div class="quote">L142：指针指向 uart5_rx_buf[start]。这只是一段连续地址，绕回 0 时后半段不在这后面。
+L191 的第二个问题：memcpy 假定 [rx_data_ptr, rx_data_ptr+rx_len) 连续。
+环形缓冲：start=250，len=20 → 合法数据是 buf[250..255] 再加 buf[0..13]。
+memcpy 从 &amp;buf[250] 连拷 20 字节，会读到 buf[256] 以外，后 14 字节永远拷不到。
+uart5_read_pos / usart6_read_pos 声明了没用。</div>
+        </article>
+        <article class="card now">
+          <div class="tag">这次对应在讲什么</div>
+          <div class="now-box">
+            DMA 环形缓冲是转盘：写到末尾接着从 0 写。<br />
+            一包数据可能拆成两截：<strong>尾巴 + 开头</strong>。<br />
+            <code>memcpy</code> 只认「从某地址往后连着拷」，不会自己绕回 0。<br />
+            下面用 16 格演示（真机是 256 格，算法一样）。点「下一时刻」看该拷什么、实际拷了什么。
+          </div>
+        </article>
+      </div>
+      <h3>16 格转盘演示（start=13，len=6）</h3>
+      <div class="row">
+        <button id="wrapPrev" class="ghost">上一时刻</button>
+        <button id="wrapNext">下一时刻</button>
+        <span id="wrapTitle" class="step-label"></span>
+      </div>
+      <p id="wrapText"></p>
+      <div class="tape" id="wrapTape"></div>
+      <div class="legend">
+        <span><i class="sw" style="background:#c8ead7"></i>这一包真正的数据</span>
+        <span><i class="sw" style="box-shadow:inset 0 0 0 2px #1f7a4d;background:#fff"></i>绿框：应该拷的格子</span>
+        <span><i class="sw" style="box-shadow:inset 0 0 0 2px #b42318;background:#fff"></i>红框：memcpy 实际去读的格子</span>
+        <span><i class="sw" style="background:#f4c7c3"></i>缓冲区外面（越界）</span>
+      </div>
+      <div class="call" id="wrapCall"></div>
+    </section>
+
+    <section id="p5">
+      <h2>5. 忙就丢包；一个 flag，来不及读就被盖</h2>
+      <div class="pair">
+        <article class="card old">
+          <div class="tag">上次按行原文</div>
+          <div class="quote">L97–100：忙就返回，uart_task 不看返回值。L197、L211 失败时这包数据没了。
+L215：最多 10ms 才看一次 rx_flag。IDLE 一包一个 flag（it.c L254），第二包进来会把第一包的 rx_len 盖掉。10ms 内来两包，第一包直接丢。
+L253–254：只有一组 len/flag。任务没取走时下一包 IDLE 直接覆盖。没有队列。</div>
+        </article>
+        <article class="card now">
+          <div class="tag">这次对应在讲什么</div>
+          <div class="now-box">
+            两件独立的「丢包」，别混在一起。<br />
+            <strong>发送丢：</strong>USART6 上一包 DMA 没发完，<code>UART_DMA_Send</code> 看到 flag=0 就返回 HAL_BUSY。任务当成功了，这包不再发。<br />
+            <strong>接收丢：</strong>ISR 只有一个 <code>rx_flag</code> + 一个 <code>rx_len</code>。第二包 IDLE 进来，第一包的长度被覆盖。任务 10ms 转一圈，中间来两包只能看到最后一包。
+          </div>
+        </article>
+      </div>
+      <div class="cols">
+        <div class="card">
+          <h3 style="margin-top:0">发送：忙就丢</h3>
+          <p class="mini">1. 任务把包 A 交给 USART6 DMA，flag 置 0（忙）</p>
+          <p class="mini">2. 马上又想发包 B，<code>if (*flag_ptr == 0) return HAL_BUSY;</code></p>
+          <p class="mini">3. 任务不检查返回值 → 包 B 没了</p>
+          <div class="call">if (*flag_ptr == 0) return HAL_BUSY;
+UART_DMA_Send(...);  // 返回值扔掉了</div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">接收：一个格子记一包</h3>
+          <p class="mini">墙上只有一块牌子，写着「当前这一包多长」。</p>
+          <p class="mini">包 1 到：牌子写 10。任务还在 Delay(10ms)。</p>
+          <p class="mini">包 2 到：牌子改成 30。包 1 的 10 被擦掉。</p>
+          <p class="mini">任务醒来只看到 30，包 1 没了。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="p6">
+      <h2>6. UART5 和 USART6 空闲中断不是同一套</h2>
+      <div class="pair">
+        <article class="card old">
+          <div class="tag">上次按行原文</div>
+          <div class="quote">UART5 L250：&gt; 不是 &gt;=。current_pos == last_pos 时走 else，len 被算成整圈 256。空闲中断、DMA 没动时就会假的 256 字节包。
+USART6 L307：&gt;=，相等时 len=0。这点和 UART5 相反。
+USART6 L305：多了 % SIZE。刚好写满一圈时 UART5 得到 current_pos=256，USART6 得到 0。
+USART6 L310–314：len==0 直接 return。USART 中断里 IDLE、TC、错误共用一个向量。return 后 HAL_UART_IRQHandler 不跑，TX 完成回调可能丢，错误位可能一直挂。</div>
+        </article>
+        <article class="card now">
+          <div class="tag">这次对应在讲什么</div>
+          <div class="now-box">
+            两个串口干同一件事（DMA 循环收 + IDLE 算一包有多长），代码却抄成两份，三处对不齐。<br />
+            记三个差别：比较符、满圈取模、空包要不要 return。
+          </div>
+        </article>
+      </div>
+      <div class="cols">
+        <div class="card">
+          <h3 style="margin-top:0">UART5（it.c 约 L243）</h3>
+          <div class="call">current_pos = SIZE - remaining;     // 满圈可以是 256
+if (current_pos > last_pos)          // 相等走 else
+  len = current_pos - last_pos;
+else
+  len = (SIZE - last_pos) + current_pos;  // 相等时 = 256 假包
+
+清 IDLE;
+HAL_UART_IRQHandler();               // 总会走到</div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">USART6（it.c 约 L302）</h3>
+          <div class="call">current_pos = (SIZE - remaining) % SIZE;  // 满圈变成 0
+if (current_pos >= last_pos)              // 相等 len=0
+  len = current_pos - last_pos;
+else
+  len = current_pos + (SIZE - last_pos);
+
+if (len==0) { 清 IDLE; return; }   // HAL 被跳过
+HAL_UART_IRQHandler();</div>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>情况</th><th>UART5</th><th>USART6</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>DMA 没动，又进了一次 IDLE（位置没变）</td>
+            <td class="bad-cell">len=256，当成一整包</td>
+            <td>len=0，丢掉这帧（这点比 UART5 对）</td>
+          </tr>
+          <tr>
+            <td>len=0 时后面怎么办</td>
+            <td>继续进 HAL，TC/错误还能清</td>
+            <td class="bad-cell">return，HAL 不跑，发送完成/错误可能漏</td>
+          </tr>
+          <tr>
+            <td>刚好写满 256 字节一圈</td>
+            <td>current_pos=256</td>
+            <td>current_pos=0（多了一次取模）</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">USART6 过滤空包是对的，但用 return 把 HAL 也跳过了，副作用比「过滤」大。UART5 不过滤空包，会造假的 256 字节。</p>
+    </section>
+
+    <section id="p7">
+      <h2>7. 其余（上次放在「次要」里的）</h2>
+      <div class="pair">
+        <article class="card old">
+          <div class="tag">上次按行原文</div>
+          <div class="quote">L112、L119：UART5 TX/RX 都是 GPIO_NOPULL。RX 浮空，空闲电平不稳，容易误触发 IDLE。
+L183：USART6 是 GPIO_PULLUP，两边 RX 策略不一样。
+L135 vs L199/L220：UART5 DMA 关 FIFO；USART6 TX/RX 开 FIFO。字节串口开 FIFO 有时会让 RX 多攒几个字节才进内存，IDLE 长度和「线上已经停」对不齐。
+L84、L89：发送路径夹 LED。
+L26–33：UART_SendByte 轮询 DR，和 DMA 是两套路径。</div>
+        </article>
+        <article class="card now">
+          <div class="tag">这次对应在讲什么</div>
+          <div class="now-box">
+            这些不是「拷错 20 字节」那种必现逻辑 bug，是两边配置不对称，排障时会干扰你。<br />
+            RX 要上拉；两个串口应当同一套 DMA/GPIO 策略；LED 不该夹在发送函数里；轮询写 DR 不要和 DMA 混用。
+          </div>
+        </article>
+      </div>
+      <table>
+        <thead>
+          <tr><th></th><th>UART5</th><th>USART6</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>RX 引脚上拉</td>
+            <td class="bad-cell">NOPULL（PD2 浮空）</td>
+            <td class="ok-cell">PULLUP</td>
+          </tr>
+          <tr>
+            <td>RX DMA FIFO</td>
+            <td>关</td>
+            <td>开（1/4 阈值）</td>
+          </tr>
+          <tr>
+            <td>发送函数里的 LED</td>
+            <td>LED1=*flag</td>
+            <td>LED0=*flag</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer>
+      独立说明页，不参与编译。路径：_explain/uart_two_points.html
+    </footer>
+  </main>
+  <script>
+    const steps = [
+      {
+        title: "开始：转盘还是空的",
+        text: "256 格的转盘这里只画出前 40 格（正好够看完 last_pos=40）。DMA 还没写。墙上两个原件都是 0，任务还没有复印件。",
+        gLast: 0, gLen: 0, lLast: null, lLen: null,
+        fillTo: 0, p2from: null, copyN: 0,
+        code: "// 还没发生任何事",
+        stale: false, fresh: false, bad: false
+      },
+      {
+        title: "时刻 A　对应「ISR 写 rx_len=10，last_pos=10」",
+        text: "第一包 10 字节写进格子 0～9。ISR 在墙上写下：写到哪了=10，这一包多长=10。起点本该是 10-10=0，共 10 字节。到这里都对。",
+        gLast: 10, gLen: 10, lLast: null, lLen: null,
+        fillTo: 10, p2from: null, copyN: 0,
+        code: "ISR: uart5_last_pos = 10;  uart5_rx_len = 10;",
+        stale: false, fresh: true, bad: false
+      },
+      {
+        title: "时刻 B　对应「任务关中断，局部 len=10，last=10，开中断」",
+        text: "任务把墙上的数抄到局部变量里，这叫复印件。抄完就开中断。复印件是 last=10、len=10。从现在起 ISR 可以改原件，但改不了这份复印件。",
+        gLast: 10, gLen: 10, lLast: 10, lLen: 10,
+        fillTo: 10, p2from: null, copyN: 0,
+        code: "last = 10;  len = 10;  uart5_rx_flag = 0;\n__enable_irq();   // 开中断，原件随时会被改",
+        stale: true, fresh: false, bad: false
+      },
+      {
+        title: "时刻 C　对应「ISR 再进，rx_len=30，last_pos=40」",
+        text: "第二包 30 字节写进格子 10～39。ISR 覆盖墙上的原件：last_pos=40，rx_len=30。任务手里的复印件还是 10 和 10，没变。窗口就在「开中断」到「return」之间，不是每次都会碰上，但碰上长度就错。",
+        gLast: 40, gLen: 30, lLast: 10, lLen: 10,
+        fillTo: 40, p2from: 10, copyN: 0,
+        code: "ISR 又来了:\nuart5_last_pos = 40;   // 原件被改\nuart5_rx_len  = 30;   // 这是第二包的长度",
+        stale: true, fresh: true, bad: false
+      },
+      {
+        title: "时刻 D　对应「用旧 last/len 算出 start=0，却 return 30」",
+        text: "return 30 时，调用方以为在拷第二包。但 start 仍是 0，所以从格子 0 连拷 30 格（红框 0～29）。相对第二包真正该拷的 10～39：前面 0～9 把第一包带进去了；后面 30～39（蓝虚线）没拷到。不是「多了 20 字节垃圾」那么简单，是整段窗口往前错了 10 格。",
+        gLast: 40, gLen: 30, lLast: 10, lLen: 10,
+        fillTo: 40, p2from: 10, copyN: 30, missFrom: 30, missTo: 40,
+        code: "start = (last - len + 256) % 256;   // 0　← 第一包的头\nreturn uart5_rx_len;                 // 30　← 第二包的长度\n实际拷  0～29\n第二包该拷 10～39\n前面多了 A（0～9），后面少了 B（30～39）",
+        stale: true, fresh: false, bad: true
+      }
+    ];
+
+    let i = 0;
+    const tape = document.getElementById("tape");
+    for (let n = 0; n < 40; n++) {
+      const d = document.createElement("div");
+      d.className = "cell";
+      d.innerHTML = '<span class="idx">' + n + '</span><span class="ch"></span>';
+      tape.appendChild(d);
+    }
+    const cells = [...tape.children];
+
+    function render() {
+      const s = steps[i];
+      document.getElementById("stepTitle").textContent = (i + 1) + " / " + steps.length + "　" + s.title;
+      document.getElementById("stepText").textContent = s.text;
+      document.getElementById("gLastV").textContent = s.gLast;
+      document.getElementById("gLenV").textContent = s.gLen;
+      document.getElementById("lLastV").textContent = s.lLast === null ? "（还没拍）" : s.lLast;
+      document.getElementById("lLenV").textContent = s.lLen === null ? "（还没拍）" : s.lLen;
+      document.getElementById("callout").innerHTML = s.code.replace(/\n/g, "<br>");
+      document.getElementById("prev").disabled = i === 0;
+      document.getElementById("next").disabled = i === steps.length - 1;
+
+      ["gLast","gLen"].forEach((id) => {
+        document.getElementById(id).className = "var" + (s.fresh ? " fresh" : "");
+      });
+      ["lLast","lLen"].forEach((id) => {
+        document.getElementById(id).className = "var" + (s.stale ? " stale" : "");
+      });
+      if (s.bad) document.getElementById("gLen").classList.add("bad");
+
+      cells.forEach((c, n) => {
+        c.className = "cell";
+        const ch = c.querySelector(".ch");
+        ch.textContent = "";
+        if (n < Math.min(s.fillTo, 10)) {
+          c.classList.add("p1");
+          ch.textContent = "A";
+        } else if (s.p2from != null && n >= s.p2from && n < s.fillTo) {
+          c.classList.add("p2");
+          ch.textContent = "B";
+        }
+        if (s.copyN && n < s.copyN) c.classList.add("copy");
+        if (s.missFrom != null && n >= s.missFrom && n < s.missTo) c.classList.add("miss");
+      });
+    }
+    document.getElementById("prev").onclick = () => { if (i > 0) { i--; render(); } };
+    document.getElementById("next").onclick = () => { if (i < steps.length - 1) { i++; render(); } };
+    render();
+
+    const wrapSteps = [
+      {
+        title: "转盘上这一包跨过了末尾",
+        text: "16 格只是缩小版。这一包 6 字节从格子 13 开始：13、14、15，然后绕回 0、1、2。两截才是完整一包。",
+        want: [13,14,15,0,1,2], copy: [], oob: [],
+        code: "start = 13;  len = 6;\n真正的数据：13～15 再加 0～2"
+      },
+      {
+        title: "代码只给了一个指针 uart5_rx_buf[start]",
+        text: "L142 返回的是 &buf[13]。从 13 往后在内存里是连着的 13、14、15，然后就是 buf 外面了。0、1、2 在缓冲开头，不在这块指针后面。",
+        want: [13,14,15,0,1,2], copy: [], oob: [],
+        code: "*data_ptr = &uart5_rx_buf[13];\nreturn 6;"
+      },
+      {
+        title: "memcpy 从 13 连拷 6 格",
+        text: "它不管转盘。实际去读：13、14、15，再往后三格已经不是 buf 了（红底越界）。0、1、2 绿框在，但 memcpy 根本没去那里。该拷的后半段没拷到，还读了缓冲区外面。",
+        want: [13,14,15,0,1,2], copy: [13,14,15], oob: [16,17,18],
+        code: "memcpy(temp, data_ptr, 6);\n实际读到：13,14,15 + 越界三格\n没读到：0,1,2"
+      }
+    ];
+    let wi = 0;
+    const wrapTape = document.getElementById("wrapTape");
+    for (let n = 0; n < 16; n++) {
+      const d = document.createElement("div");
+      d.className = "cell";
+      d.innerHTML = '<span class="idx">' + n + '</span><span class="ch"></span>';
+      wrapTape.appendChild(d);
+    }
+    const oobRow = document.createElement("div");
+    oobRow.className = "tape";
+    oobRow.style.marginTop = "6px";
+    oobRow.id = "oobTape";
+    wrapTape.after(oobRow);
+    for (let n = 16; n < 19; n++) {
+      const d = document.createElement("div");
+      d.className = "cell";
+      d.innerHTML = '<span class="idx">' + n + ' 外面</span><span class="ch">?</span>';
+      oobRow.appendChild(d);
+    }
+    const wrapCells = [...wrapTape.children];
+    const oobCells = [...oobRow.children];
+
+    function renderWrap() {
+      const s = wrapSteps[wi];
+      document.getElementById("wrapTitle").textContent = (wi + 1) + " / " + wrapSteps.length + "　" + s.title;
+      document.getElementById("wrapText").textContent = s.text;
+      document.getElementById("wrapCall").innerHTML = s.code.replace(/\n/g, "<br>");
+      document.getElementById("wrapPrev").disabled = wi === 0;
+      document.getElementById("wrapNext").disabled = wi === wrapSteps.length - 1;
+      wrapCells.forEach((c, n) => {
+        c.className = "cell";
+        const ch = c.querySelector(".ch");
+        ch.textContent = s.want.indexOf(n) >= 0 ? "D" : "";
+        if (s.want.indexOf(n) >= 0) c.classList.add("p1");
+        if (s.want.indexOf(n) >= 0) c.classList.add("want");
+        if (s.copy.indexOf(n) >= 0) c.classList.add("copy");
+      });
+      oobCells.forEach((c) => {
+        c.className = "cell" + (s.oob.length ? " oob copy" : "");
+      });
+    }
+    document.getElementById("wrapPrev").onclick = () => { if (wi > 0) { wi--; renderWrap(); } };
+    document.getElementById("wrapNext").onclick = () => { if (wi < wrapSteps.length - 1) { wi++; renderWrap(); } };
+    renderWrap();
+  </script>
+</body>
+</html>

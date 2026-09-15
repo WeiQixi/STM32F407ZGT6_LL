@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>本工程 FreeRTOS + LVGL 实际怎么移植的</title>
+  <style>
+    :root { --bg:#f4f1ea; --paper:#fffcf6; --ink:#1c1915; --muted:#6b6458; --line:#ddd6c8; --ok:#1f7a4d; --warn:#8a3b12; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:16px/1.65 "Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; color:var(--ink); background:var(--bg); }
+    header, main { max-width: 920px; margin: 0 auto; }
+    header { padding: 28px 20px 12px; }
+    h1 { font-size: 24px; margin: 0 0 8px; }
+    .lead { color: var(--muted); margin: 0; }
+    main { padding: 8px 20px 64px; }
+    h2 { font-size: 18px; border-bottom: 2px solid var(--ink); padding-bottom: 6px; margin-top: 28px; }
+    h3 { font-size: 15px; }
+    .card { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 10px 0; }
+    ol.steps { padding-left: 22px; }
+    ol.steps li { margin: 6px 0; }
+    code, .path { font-family: Consolas,"Cascadia Mono",monospace; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; background: var(--paper); }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 14px; }
+    th { color: var(--muted); font-weight: 600; }
+    .ok { color: var(--ok); font-weight: 700; }
+    .warn { color: var(--warn); font-weight: 700; }
+    .call { background:#1c1915; color:#f4f1ea; padding:10px 12px; border-radius:8px; font:13px/1.5 Consolas,monospace; overflow:auto; }
+    .note { font-size: 13px; color: var(--muted); }
+    nav a { color: var(--ink); margin-right: 12px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>本工程 FreeRTOS + LVGL 实际怎么移植的</h1>
+  <p class="lead">对照已能跑的 <code>R_LCD_FreeRTOS_LVGL_UART</code>。Cube 出 LL 串口时<strong>不用重做</strong>这两份；若从 Cube 新工程再搬一遍，按下面查。</p>
+  <nav>
+    <a href="#cmp">源码对照</a>
+    <a href="#base">底子</a>
+    <a href="#rtos">FreeRTOS</a>
+    <a href="#lvgl">LVGL</a>
+    <a href="#keil">Keil</a>
+    <a href="#check">回头排查清单</a>
+  </nav>
+</header>
+<main>
+  <section id="cmp">
+    <h2>0. 源码对照记录（官方树 vs 本工程 vs 上一份记录）</h2>
+    <p class="note">对照对象：<code>R_LCD_FreeRTOS_LVGL_UART/FreeRTOS</code>（32 个文件）、<code>.../LVGL</code>（约 1221 个文件，含 ui）。版本以源码宏为准。</p>
+
+    <h3>FreeRTOS 源码</h3>
+    <table>
+      <tr><th></th><th>官方 Kernel 常见布局</th><th>本工程实际</th><th>上一份记录</th></tr>
+      <tr>
+        <td>版本</td>
+        <td>task.h 里写</td>
+        <td class="ok">V11.1.0（task.h L56）</td>
+        <td class="ok">写过 V11.1.0，对</td>
+      </tr>
+      <tr>
+        <td>目录名</td>
+        <td>Source/include、Source/*.c、portable/MemMang、portable/RVDS/ARM_CM4F</td>
+        <td>改过名：<code>Inc/</code>、<code>Src/</code>、<code>portable/heap/heap_4.c</code>、<code>portable/ARM_CM4F/</code></td>
+        <td>只写了拷这些目录，没写「和官方路径不一样」</td>
+      </tr>
+      <tr>
+        <td>裁剪</td>
+        <td>一堆 CPU 的 portable、demo、License</td>
+        <td>只留 CM4F + heap_4 + 内核 7 个 c。没有 MemMang 其它 heap，没有 GCC 移植</td>
+        <td>没写裁剪</td>
+      </tr>
+      <tr>
+        <td>port.c</td>
+        <td>GCC 用 <code>__attribute__</code>；Keil 用 <code>__asm</code></td>
+        <td class="warn">Keil/ARMCC：<code>__asm void xPortPendSVHandler</code>。且 <code>#ifndef __TARGET_FPU_VFP</code> 直接 #error</td>
+        <td>写了要用 CM4F，没写必须开 FPU，也没写这是 ARM 汇编语法</td>
+      </tr>
+      <tr>
+        <td>符号对接</td>
+        <td>port.c 函数名是 xPortPendSVHandler / vPortSVCHandler</td>
+        <td>Config 里 <code>#define xPortPendSVHandler PendSV_Handler</code>，所以 it.c 必须把同名空函数注释掉</td>
+        <td class="ok">对</td>
+      </tr>
+      <tr>
+        <td>Config</td>
+        <td>应用层文件，不在 Kernel 源码里</td>
+        <td>放在 <code>FreeRTOS/Inc/FreeRTOSConfig.h</code>，各工程这份几乎一样：heap 30KB，syscall=80</td>
+        <td class="ok">对</td>
+      </tr>
+    </table>
+
+    <h3>LVGL 源码</h3>
+    <table>
+      <tr><th></th><th>官方</th><th>本工程实际</th><th>上一份记录</th></tr>
+      <tr>
+        <td>版本</td>
+        <td>lv_version.h</td>
+        <td class="ok">9.5.0-dev（MAJOR 9 MINOR 5 PATCH 0 INFO "dev"）</td>
+        <td class="ok">写过 v9.5-dev</td>
+      </tr>
+      <tr>
+        <td>lv_conf.h 位置</td>
+        <td>建议放在 <strong>lvgl 文件夹旁边</strong>。src/lv_conf_internal.h 默认 <code>#include "../../lv_conf.h"</code></td>
+        <td class="warn">放在 <strong>LVGL 文件夹里面</strong>：<code>LVGL/lv_conf.h</code>。能编过是因为 Keil Include 有 <code>../LVGL</code>，<code>__has_include("lv_conf.h")</code> 扫到了。按官方相对路径其实找不到</td>
+        <td>写成「目录旁（本工程就在 LVGL/lv_conf.h）」——旁和里面拧了</td>
+      </tr>
+      <tr>
+        <td>LV_USE_OS</td>
+        <td>可开 LV_OS_FREERTOS，会编 src/osal/lv_freertos.c</td>
+        <td class="ok">LV_OS_NONE。源码里有 lv_freertos.c，但被 <code>#if LV_USE_OS == LV_OS_FREERTOS</code> 整文件掐掉</td>
+        <td class="ok">写了 NONE，对</td>
+      </tr>
+      <tr>
+        <td>移植模板</td>
+        <td>examples/porting 里 #if 0，要拷走改名</td>
+        <td>直接改模板：disp/indev <code>#if 1</code>；<code>lv_port_fs.c</code> 仍是 <code>#if 0</code> 没接文件系统</td>
+        <td>没写 fs 是关的</td>
+      </tr>
+      <tr>
+        <td>刷屏缓冲</td>
+        <td>示例 10 行</td>
+        <td>UART/SD/demo：<code>HOR * 20</code> 行；UI/SRAM：<code>HOR * 5</code> 行（注释还写着 10 rows）</td>
+        <td>只写了 UART 的 20 行</td>
+      </tr>
+      <tr>
+        <td>LV_MEM_SIZE</td>
+        <td>conf 里配</td>
+        <td>UART/SD/demo/_R_：64KB；UI/SRAM：30KB（和 FreeRTOS heap 30KB 叠在一起更紧）</td>
+        <td>只写了 64KB</td>
+      </tr>
+    </table>
+
+    <h3>各工程源码差（同套移植，参数不完全一样）</h3>
+    <table>
+      <tr><th>工程</th><th>FreeRTOS heap</th><th>LV_MEM</th><th>disp 缓冲行数</th><th>it.c SVC/PendSV</th></tr>
+      <tr><td>R_LCD_FreeRTOS_LVGL_UART</td><td>30KB</td><td>64KB</td><td>20</td><td>已注释</td></tr>
+      <tr><td>R_LCD_FreeRTOS_LVGL_SD</td><td>30KB</td><td>64KB</td><td>20</td><td>已注释</td></tr>
+      <tr><td>R_LCD_FreeRTOS_LVGL_demo / _R_</td><td>30KB</td><td>64KB</td><td>20</td><td>已注释</td></tr>
+      <tr><td>R_LCD_FreeRTOS_LVGL_UI / SRAM</td><td>30KB</td><td>30KB</td><td>5</td><td>已注释</td></tr>
+      <tr><td>define_init（Cube 底）</td><td>无 RTOS</td><td>无 LVGL</td><td>—</td><td class="warn">还是空的 SVC/PendSV，一拷 RTOS 必撞</td></tr>
+    </table>
+    <p>分辨率源码全是 HOR=240 VER=320。UI/SRAM 把刷屏缓冲收成 5 行，是为了省内部 SRAM（再叠 LV_MEM 30KB）。</p>
+  </section>
+
+  <section id="base">
+    <h2>1. 底子从哪来</h2>
+    <div class="card">
+      <p>CubeMX 底工程是 <code>define_init/</code>（<code>Define_Init.ioc</code>）。UART 工程目录里<strong>没有 .ioc</strong>。FreeRTOS、LVGL、HardWare 都是手拷进 Keil 的，不是 Cube 中间件生成的。</p>
+      <p>时钟：HSE + PLL，168MHz，FLASH_LATENCY_5。LCD 走 FSMC Bank4（<code>0x6C000000</code>），SRAM 若有则 Bank3（<code>0x68000000</code>）。</p>
+      <p class="note">横竖屏：readme 写过，初始化扫描方向要换，<code>MY_DISP_HOR_RES</code> / <code>MY_DISP_VER_RES</code> 也要换。当前竖屏：水平 240，竖直 320。</p>
+    </div>
+  </section>
+
+  <section id="rtos">
+    <h2>2. FreeRTOS（手拷，V11.1.0）</h2>
+    <ol class="steps">
+      <li>拷目录 <code>FreeRTOS/</code>：<code>Src</code>、<code>Inc</code>、<code>portable/ARM_CM4F</code>、<code>portable/heap/heap_4.c</code>。</li>
+      <li>用这份 <code>FreeRTOS/Inc/FreeRTOSConfig.h</code>，不要用官方默认一份了事。</li>
+      <li><code>main.h</code> 的 USER CODE 里包含 <code>FreeRTOS.h task.h timers.h queue.h semphr.h</code>。</li>
+      <li>改 <code>stm32f4xx_it.c</code> 内核中断（最容易被 Cube 再生成冲掉）。</li>
+      <li><code>main</code> 里建任务，最后 <code>vTaskStartScheduler()</code>。</li>
+      <li>用 DWT 重写 <code>HAL_GetTick</code>，因为 SysTick 已经交给 FreeRTOS。</li>
+    </ol>
+    <h3>Config 里必须对上的数</h3>
+    <table>
+      <tr><th>项</th><th>本工程实际值</th></tr>
+      <tr><td>configCPU_CLOCK_HZ</td><td>SystemCoreClock（168MHz）</td></tr>
+      <tr><td>configTICK_RATE_HZ</td><td>1000</td></tr>
+      <tr><td>configTOTAL_HEAP_SIZE</td><td>30KB，heap_4</td></tr>
+      <tr><td>port</td><td>ARM_CM4F（F407 有 FPU，不要用 CM3）</td></tr>
+      <tr><td>configKERNEL_INTERRUPT_PRIORITY</td><td>255（PendSV/SysTick 最低）</td></tr>
+      <tr><td>configMAX_SYSCALL_INTERRUPT_PRIORITY</td><td>80（即抢占优先级 5。能调 FreeRTOS API 的中断，数值必须 ≥ 5）</td></tr>
+      <tr><td>xPortPendSVHandler</td><td>映射成 PendSV_Handler</td></tr>
+      <tr><td>vPortSVCHandler</td><td>映射成 SVC_Handler</td></tr>
+      <tr><td>xPortSysTickHandler</td><td><strong>不要</strong>直接映射成 SysTick_Handler，自己包一层</td></tr>
+    </table>
+    <h3>it.c 三件套（Cube 再 Generate 必查）</h3>
+    <div class="call">/* 这两函数要注释掉，改由 port.c 提供 */
+// void SVC_Handler(void) { ... }
+// void PendSV_Handler(void) { ... }
+
+void SysTick_Handler(void)
+{
+  if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
+    xPortSysTickHandler();
+  }
+}</div>
+    <p class="note">调度器没起来之前不能进 FreeRTOS 的 SysTick。HAL 延时改走 DWT：<code>HAL_GetTick = DWT-&gt;CYCCNT / (SystemCoreClock/1000)</code>，<code>DWT_Init()</code> 在 <code>HAL_Init</code> 之后、<code>SystemClock_Config</code> 前后都有清零。</p>
+    <h3>中断优先级</h3>
+    <p>本工程 UART 抢占优先级 5，DMA 为 6。都 ≥ 5，可以从 ISR 里给信号量。若 Cube 默认成 0，一调 <code>xSemaphoreGiveFromISR</code> 就会 assert。</p>
+  </section>
+
+  <section id="lvgl">
+    <h2>3. LVGL（v9.5-dev，手拷）</h2>
+    <ol class="steps">
+      <li>拷整个 <code>LVGL/</code>。<code>lv_conf.h</code> 在本工程是<strong>放在 LVGL 目录里面</strong>，靠 Keil Include <code>../LVGL</code> 让 <code>#include "lv_conf.h"</code> 成立。官方默认是放在 lvgl 文件夹旁边（<code>../../lv_conf.h</code>）。新工程两种都能用，不要混着拷路径。</li>
+      <li>移植模板：<code>LVGL/examples/porting/lv_port_disp.c</code>、<code>lv_port_indev.c</code>，文件头 <code>#if 1</code> 打开。</li>
+      <li>显示：<code>disp_init</code> 里 <code>LCD_Init()</code>。<code>MY_DISP_HOR_RES 240</code>，<code>MY_DISP_VER_RES 320</code>。单缓冲 partial，高度 20 行。</li>
+      <li>flush：<code>LCD_Open_Window</code> → 写命令 <code>0x2C</code> → 循环 <code>LCD_DAT = *p_buf++</code> → <code>lv_display_flush_ready</code>。</li>
+      <li>触摸：<code>Touch_Init()</code>，<code>XPT2046_GetPressedAndXY</code>。init 后把 indev 读周期改成 10ms。</li>
+      <li><code>main</code> 顺序：外设初始化 → <code>lv_init()</code> → <code>lv_tick_set_cb(lv_Get_FreeRTOS_Tick_ms)</code> → <code>lv_port_disp_init()</code> → <code>lv_port_indev_init()</code> → 建任务 → <code>vTaskStartScheduler()</code>。</li>
+      <li>单独一个 LVGL 任务：<code>lv_timer_handler(); vTaskDelay(5);</code>，栈 1024 字（4096 字节），优先级 2。</li>
+    </ol>
+    <h3>lv_conf 实际关键项</h3>
+    <table>
+      <tr><th>项</th><th>值</th><th>备注</th></tr>
+      <tr><td>LV_COLOR_DEPTH</td><td>16</td><td>RGB565，和 ILI9341/FSMC 16 位一致</td></tr>
+      <tr><td>LV_MEM_SIZE</td><td>64KB</td><td>LVGL 自己的堆，不是 FreeRTOS heap</td></tr>
+      <tr><td>LV_USE_OS</td><td>LV_OS_NONE</td><td>没有开 LVGL 的 FreeRTOS 层；节拍靠 tick_cb，刷新靠自己的任务</td></tr>
+      <tr><td>LV_DEF_REFR_PERIOD</td><td>33</td><td>触摸另改成 10ms</td></tr>
+    </table>
+    <h3>v9.5 链接补丁（在 main.c 末尾）</h3>
+    <div class="call">void lv_bin_decoder_init(void) { }
+lv_result_t lv_draw_buf_convert_premultiply(lv_draw_buf_t * buf) {
+  LV_UNUSED(buf);
+  return LV_RESULT_INVALID;
+}</div>
+    <p class="note">缺这两个会链接失败。UI 工程还有 SquareLine 生成的 <code>LVGL/ui</code>。</p>
+  </section>
+
+  <section id="keil">
+    <h2>4. Keil 工程要加的</h2>
+    <p>Include（UART 工程现用）：</p>
+    <div class="call">Core/Inc
+Drivers/STM32F4xx_HAL_Driver/Inc
+Drivers/CMSIS/...
+FreeRTOS/Inc
+FreeRTOS/portable/ARM_CM4F
+HardWare/lcd  uart  led
+LVGL
+LVGL/ui
+LVGL/src
+LVGL/examples/porting</div>
+    <p>文件分组：FreeRTOS 三组（port / heap / Src）、HardWare/lcd、LVGL/Config、Porting、src 各子目录、ui。</p>
+    <p>FPU：ARM_CM4F 要求工程开 FPU（Cube 默认 F407 一般已开）。</p>
+  </section>
+
+  <section id="check">
+    <h2>5. 回头移植时按这个查（优先顺序）</h2>
+    <table>
+      <tr><th>#</th><th>症状</th><th>先看哪</th></tr>
+      <tr><td>1</td><td>HardFault / 调度立刻死</td><td>SVC、PendSV 是否又被 Cube 生成出来和 port.c 重复</td></tr>
+      <tr><td>2</td><td>HAL_Delay 卡死或超时全乱</td><td>有没有 DWT 版 HAL_GetTick；SysTick 是否还在调 HAL_IncTick</td></tr>
+      <tr><td>3</td><td>configASSERT 停在中断里</td><td>该 ISR 优先级是否 &lt; 5（数字越小越高，不能调 FromISR API）</td></tr>
+      <tr><td>4</td><td>屏幕花、只刷一条</td><td>HOR/VER 是否和扫描方向一致；flush 有没有发 0x2C</td></tr>
+      <tr><td>5</td><td>触摸反了或不跟手</td><td>xpt2046 坐标和竖屏；indev 周期 10ms 是否还在</td></tr>
+      <tr><td>6</td><td>LVGL 链接缺符号</td><td>两个 v9.5 空函数；lv_conf.h 是否在包含路径里</td></tr>
+      <tr><td>7</td><td>任务创建失败</td><td>heap 30KB 够不够；LVGL 任务栈 1024 字；UI 工程曾用 4096</td></tr>
+      <tr><td>8</td><td>界面不动</td><td>有没有 lv_tick_set_cb；有没有任务里循环 lv_timer_handler</td></tr>
+      <tr><td>9</td><td>Cube 一 Generate 全坏</td><td>只应动 usart/dma；it.c 三件套和 main 用户区再对一遍</td></tr>
+    </table>
+    <p class="note">对照源：<code>R_LCD_FreeRTOS_LVGL_UART</code> 的 <code>FreeRTOSConfig.h</code>、<code>stm32f4xx_it.c</code>、<code>main.c</code>、<code>lv_port_disp.c</code>、<code>lv_port_indev.c</code>、<code>lv_conf.h</code>。</p>
+  </section>
+</main>
+</body>
+</html>
