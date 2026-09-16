@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;..\RTOS\Include;..\RTOS\Portable\RVDS\ARM_CM4F</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;..\RTOS\Include;..\RTOS\Portable\RVDS\ARM_CM4F;..\Hardware\usb_fs</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -484,6 +484,11 @@
               <FileType>1</FileType>
               <FilePath>../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_exti.c</FilePath>
             </File>
+            <File>
+              <FileName>stm32f4xx_ll_usb.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\STM32F4xx_HAL_Driver\Src\stm32f4xx_ll_usb.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -548,6 +553,16 @@
               <FileName>timers.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\RTOS\Source\timers.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Hardware/usb_fs</GroupName>
+          <Files>
+            <File>
+              <FileName>usb_fs_ll.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Hardware\usb_fs\usb_fs_ll.c</FilePath>
             </File>
           </Files>
         </Group>
