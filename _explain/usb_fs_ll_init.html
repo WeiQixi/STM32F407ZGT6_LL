@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FreeRTOS_LL_demo USB OTG FS LL 初始化记录</title>
+  <style>
+    :root {
+      --bg: #eef3f8;
+      --paper: #ffffff;
+      --ink: #182533;
+      --muted: #657383;
+      --line: #d8e1ea;
+      --blue: #1769aa;
+      --blue-soft: #e8f3fc;
+      --green: #177652;
+      --green-soft: #e8f6f0;
+      --amber: #996013;
+      --amber-soft: #fff4dc;
+      --red: #a53d37;
+      --red-soft: #fceceb;
+      --code: #142332;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font: 16px/1.68 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    header {
+      color: #f8fbff;
+      background: linear-gradient(135deg, #103b61, #1776b9);
+      padding: 44px 20px 36px;
+    }
+    .wrap, main { max-width: 1040px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 42px); line-height: 1.2; }
+    header p { margin: 0; color: #d8eafa; }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+    .badge {
+      border: 1px solid rgba(255,255,255,.32);
+      border-radius: 999px;
+      padding: 5px 11px;
+      font-size: 13px;
+      background: rgba(255,255,255,.09);
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: rgba(255,255,255,.94);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+    }
+    nav .wrap { display: flex; gap: 18px; overflow-x: auto; padding: 11px 20px; }
+    nav a { color: var(--ink); text-decoration: none; white-space: nowrap; font-size: 14px; }
+    nav a:hover { color: var(--blue); }
+    main { padding: 28px 20px 70px; }
+    section { margin: 0 0 42px; scroll-margin-top: 60px; }
+    h2 {
+      margin: 0 0 15px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--ink);
+      font-size: 21px;
+    }
+    h3 { margin: 18px 0 8px; font-size: 16px; }
+    p { margin: 8px 0; }
+    code { font: 13px/1.5 Consolas, "Cascadia Mono", monospace; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .card h3 { margin-top: 0; }
+    .ok { border-top: 4px solid var(--green); }
+    .warn { border-top: 4px solid var(--amber); }
+    .stop { border-top: 4px solid var(--red); }
+    .status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      color: var(--green);
+      background: var(--green-soft);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .pending { color: var(--amber); background: var(--amber-soft); }
+    .blocked { color: var(--red); background: var(--red-soft); }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(9, auto);
+      gap: 7px;
+      align-items: center;
+      margin: 16px 0;
+      overflow-x: auto;
+    }
+    .node {
+      min-width: 112px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      text-align: center;
+      font-size: 13px;
+    }
+    .arrow { color: var(--blue); font-size: 22px; }
+    .code {
+      color: #e8f3fb;
+      background: var(--code);
+      border-radius: 10px;
+      padding: 14px 16px;
+      overflow: auto;
+      white-space: pre;
+      font: 13px/1.58 Consolas, "Cascadia Mono", monospace;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--paper);
+      border: 1px solid var(--line);
+    }
+    th, td { padding: 9px 11px; border-bottom: 1px solid var(--line); text-align: left; }
+    th { color: var(--muted); font-size: 13px; }
+    td { font-size: 14px; }
+    .callout {
+      border-left: 4px solid var(--blue);
+      background: var(--blue-soft);
+      padding: 12px 14px;
+      border-radius: 0 9px 9px 0;
+    }
+    .callout.warnbox { border-color: var(--amber); background: var(--amber-soft); }
+    .callout.stopbox { border-color: var(--red); background: var(--red-soft); }
+    ol, ul { padding-left: 22px; }
+    li { margin: 5px 0; }
+    .checklist { list-style: none; padding: 0; }
+    .checklist li {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 9px 0;
+      border-bottom: 1px dashed var(--line);
+    }
+    input[type="checkbox"] { margin-top: 6px; accent-color: var(--blue); }
+    footer { text-align: center; color: var(--muted); font-size: 13px; padding-top: 20px; }
+    @media (max-width: 720px) {
+      .grid { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>USB OTG FS LL 初始化记录</h1>
+      <p>FreeRTOS_LL_demo · STM32F407ZGT6 · Device Only · Embedded PHY</p>
+      <div class="badges">
+        <span class="badge">HSE 8MHz</span>
+        <span class="badge">SYSCLK 168MHz</span>
+        <span class="badge">USB 48MHz</span>
+        <span class="badge">Full Speed 12Mbit/s</span>
+        <span class="badge">PA11 / PA12</span>
+        <span class="badge">Keil MDK-ARM</span>
+      </div>
+    </div>
+  </header>
+
+  <nav>
+    <div class="wrap">
+      <a href="#status">当前状态</a>
+      <a href="#hardware">硬件选择</a>
+      <a href="#boundary">HAL/LL 边界</a>
+      <a href="#project">工程配置</a>
+      <a href="#flow">初始化流程</a>
+      <a href="#pending">待完成</a>
+      <a href="#generate">生成后检查</a>
+      <a href="#rules">使用约定</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="status">
+      <h2>当前状态</h2>
+      <div class="grid">
+        <div class="card ok">
+          <h3><span class="status">初始化框架已完成</span></h3>
+          <p>GPIO、USB 外设时钟与复位、公共内核、Device 模式和设备寄存器初始化已完成。</p>
+          <p>初始化结尾主动关闭全局中断，并保持 USB 软断开。</p>
+        </div>
+        <div class="card stop">
+          <h3><span class="status blocked">尚不能枚举</span></h3>
+          <p>FIFO、EP0、中断、SETUP 处理和描述符尚未实现。</p>
+          <p>当前连接电脑不会识别设备，这是预期结果。</p>
+        </div>
+      </div>
+      <p class="callout stopbox">
+        在 FIFO、EP0 和 <code>OTG_FS_IRQHandler</code> 完成前，不调用
+        <code>USB_EnableGlobalInt()</code> 和 <code>USB_DevConnect()</code>，也不连接主机测试。
+      </p>
+    </section>
+
+    <section id="hardware">
+      <h2>硬件与工作模式</h2>
+      <table>
+        <thead><tr><th>项目</th><th>当前选择</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>控制器</td><td><code>USB_OTG_FS</code></td><td>不使用 USB_OTG_HS</td></tr>
+          <tr><td>角色</td><td>Device Only</td><td>强制切换到设备模式</td></tr>
+          <tr><td>PHY</td><td>Embedded PHY</td><td>无需外部 ULPI PHY</td></tr>
+          <tr><td>速度</td><td>Full Speed</td><td>12Mbit/s</td></tr>
+          <tr><td>引脚</td><td>PA11 DM / PA12 DP</td><td>AF10、Very High Speed、No Pull</td></tr>
+          <tr><td>USB 时钟</td><td>48MHz</td><td>HSE 8MHz，PLLQ = 7</td></tr>
+          <tr><td>端点数量</td><td>4</td><td>EP0 最大包 64 字节</td></tr>
+          <tr><td>DMA</td><td>关闭</td><td>当前不使用 DMA；FIFO 尚未分配</td></tr>
+          <tr><td>VBUS 检测</td><td>关闭</td><td>不配置 PA9</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="boundary">
+      <h2>HAL 与 LL 的管理边界</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>仍由 HAL 提供</h3>
+          <ul>
+            <li><code>HAL_Init()</code> 和系统时基</li>
+            <li>系统时钟配置</li>
+            <li><code>HAL_StatusTypeDef</code></li>
+            <li><code>HAL_Delay()</code></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>由用户 LL 代码独占</h3>
+          <ul>
+            <li>USB_OTG_FS 初始化</li>
+            <li>FIFO 与端点</li>
+            <li>USB 中断处理</li>
+            <li>控制传输与协议处理</li>
+          </ul>
+        </div>
+      </div>
+      <p class="callout">
+        <code>stm32f4xx_ll_usb.c</code> 依赖 HAL 类型和时基，并受
+        <code>HAL_PCD_MODULE_ENABLED</code> 条件编译控制。启用该宏只是为了编译 USB 底层，
+        不等于调用 HAL PCD 接管 USB。
+      </p>
+      <p class="callout warnbox">
+        不调用 <code>HAL_PCD_Init()</code>，不添加
+        <code>stm32f4xx_hal_pcd.c</code> 或 <code>stm32f4xx_hal_pcd_ex.c</code>。
+        同一个 USB 外设实例不能同时由 HAL PCD 和用户 LL 代码管理。
+      </p>
+    </section>
+
+    <section id="project">
+      <h2>文件与 Keil 配置</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>用户 USB 文件</h3>
+          <div class="code">Hardware/usb_fs/usb_fs_ll.h
+Hardware/usb_fs/usb_fs_ll.c</div>
+          <p>Include Path：<code>..\Hardware\usb_fs</code></p>
+        </div>
+        <div class="card">
+          <h3>加入 Keil 的底层源文件</h3>
+          <div class="code">Drivers/STM32F4xx_HAL_Driver/Src/
+stm32f4xx_ll_usb.c</div>
+          <p>不加入 HAL PCD/HCD 驱动源文件。</p>
+        </div>
+      </div>
+      <div class="code">/* Core/Inc/stm32f4xx_hal_conf.h */
+#define HAL_PCD_MODULE_ENABLED
+/* 不启用 HAL_HCD_MODULE_ENABLED */</div>
+      <p class="callout warnbox">
+        <code>usb_fs_ll.h</code> 必须包含 <code>stm32f4xx_hal.h</code>。
+        只包含 <code>stm32f4xx_hal_def.h</code> 可能因包含顺序导致
+        <code>HAL_StatusTypeDef</code> 未定义，并引发大量连锁编译错误。
+      </p>
+      <p class="callout">
+        GPIO 使用 <code>LL_GPIO_SetPinMode</code> 等单项内联函数，不使用
+        <code>LL_GPIO_InitTypeDef</code>。因此不需要 <code>USE_FULL_LL_DRIVER</code>，
+        也不需要把 <code>stm32f4xx_ll_gpio.c</code> 加入工程。
+      </p>
+    </section>
+
+    <section id="flow">
+      <h2>USB_FS_LL_Init() 初始化流程</h2>
+      <div class="flow">
+        <div class="node">配置<br><strong>PA11/PA12</strong></div><div class="arrow">→</div>
+        <div class="node">开启时钟<br><strong>复位 OTG FS</strong></div><div class="arrow">→</div>
+        <div class="node">填写<br><strong>USB 配置</strong></div><div class="arrow">→</div>
+        <div class="node">初始化<br><strong>Core / Device</strong></div><div class="arrow">→</div>
+        <div class="node">保持<br><strong>软断开</strong></div>
+      </div>
+      <ol>
+        <li><code>USB_FS_LL_GPIO_Init()</code>：配置 PA11/PA12 为 AF10。</li>
+        <li>开启 USB_OTG_FS 时钟，强制复位后释放。</li>
+        <li>填写 <code>USB_OTG_CfgTypeDef</code>：4 个端点、FS、EP0 MPS 64、Embedded PHY、关闭 DMA/VBUS/LPM。</li>
+        <li><code>USB_DisableGlobalInt()</code>：初始化期间关闭全局中断。</li>
+        <li><code>USB_CoreInit()</code>：初始化公共内核和内置 PHY。</li>
+        <li><code>USB_SetCurrentMode(USB_DEVICE_MODE)</code>：强制进入 Device 模式。</li>
+        <li><code>USB_DevInit()</code>：初始化设备模式寄存器和端点寄存器。</li>
+        <li><code>USB_DevDisconnect()</code>：在协议路径完成前维持软断开。</li>
+      </ol>
+      <p class="callout">
+        正确函数名是 <code>USB_DevInit</code>，不是 <code>USB_DeviceInit</code>。
+        每一步都检查 <code>HAL_StatusTypeDef</code>，失败则返回 <code>HAL_ERROR</code>。
+      </p>
+
+      <h3>main.c 中的调用位置</h3>
+      <div class="code">MX_GPIO_Init();
+
+if (USB_FS_LL_Init() != HAL_OK)
+{
+    Error_Handler();
+}</div>
+      <p>
+        初始化发生在调度器启动前。<code>USB_SetCurrentMode()</code> 内部使用
+        <code>HAL_Delay(10)</code> 等待模式切换；此时 HAL SysTick 已运行，
+        因此延时可以正常结束。
+      </p>
+    </section>
+
+    <section id="pending">
+      <h2>尚未完成与后续顺序</h2>
+      <div class="grid">
+        <div class="card warn">
+          <h3><span class="status pending">底层待完成</span></h3>
+          <ul>
+            <li>Rx FIFO 与各 Tx FIFO 分配</li>
+            <li>EP0 IN/OUT 激活</li>
+            <li>USB 中断源和 NVIC 配置</li>
+            <li><code>OTG_FS_IRQHandler</code></li>
+          </ul>
+        </div>
+        <div class="card warn">
+          <h3><span class="status pending">协议待完成</span></h3>
+          <ul>
+            <li>SETUP 包处理</li>
+            <li>控制传输状态机</li>
+            <li>标准设备请求</li>
+            <li>设备、配置和字符串描述符</li>
+            <li><code>USB_EnableGlobalInt</code> / <code>USB_DevConnect</code></li>
+            <li>上板枚举验证</li>
+          </ul>
+        </div>
+      </div>
+      <ol>
+        <li>先根据端点用途设计 Rx FIFO、EP0 Tx FIFO 和其他 IN 端点 Tx FIFO。</li>
+        <li>写入 FIFO 深度与起始地址。</li>
+        <li>激活 EP0 IN/OUT，准备接收第一个 SETUP 包。</li>
+        <li>实现 USB 复位、枚举完成、Rx FIFO 非空和端点中断。</li>
+        <li>实现控制传输、标准请求和描述符。</li>
+        <li>完成中断处理后再调用 <code>USB_EnableGlobalInt()</code>。</li>
+        <li>所有必要路径完成后调用 <code>USB_DevConnect()</code>，再连接主机验证。</li>
+      </ol>
+    </section>
+
+    <section id="generate">
+      <h2>CubeMX Generate 后检查</h2>
+      <ul class="checklist">
+        <li><input type="checkbox" /> <span><code>main.c</code> 中的头文件和 <code>USB_FS_LL_Init()</code> 调用仍保留。</span></li>
+        <li><input type="checkbox" /> <span><code>HAL_PCD_MODULE_ENABLED</code> 仍已启用，<code>HAL_HCD_MODULE_ENABLED</code> 未启用。</span></li>
+        <li><input type="checkbox" /> <span>Keil Include Path 仍包含 <code>..\Hardware\usb_fs</code>。</span></li>
+        <li><input type="checkbox" /> <span><code>stm32f4xx_ll_usb.c</code> 和 <code>usb_fs_ll.c</code> 仍在 Keil 工程中。</span></li>
+        <li><input type="checkbox" /> <span>PLLQ 仍为 7，USB 外设时钟仍为 48MHz。</span></li>
+        <li><input type="checkbox" /> <span>PA11/PA12 未被其他模块重复配置或管理。</span></li>
+        <li><input type="checkbox" /> <span>HAL PCD/HCD 源文件未被误加入工程。</span></li>
+        <li><input type="checkbox" /> <span>FIFO、EP0 和中断未完成时，仍保持全局中断关闭和软断开。</span></li>
+      </ul>
+    </section>
+
+    <section id="rules">
+      <h2>使用约定</h2>
+      <p>HAL 与 LL 可以在同一工程中共存，但同一个外设实例只能由一方管理。</p>
+      <p>时钟、<code>HAL_Init</code> 和 SysTick 仍可使用 HAL；USB_OTG_FS 的初始化、端点、FIFO、中断和协议处理由用户编写的 USB LL 代码独占。</p>
+      <p class="callout warnbox">
+        后续 USB 代码继续手写。未经确认，不自动补写 FIFO、EP0、中断或描述符实现。
+      </p>
+    </section>
+
+    <footer>内容对应 FreeRTOS_LL_demo/readme.txt 与当前 USB OTG FS LL 初始化实现。</footer>
+  </main>
+</body>
+</html>
