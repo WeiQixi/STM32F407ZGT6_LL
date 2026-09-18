@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FreeRTOS_LL_demo USART1 LL 初始化记录</title>
+  <style>
+    :root {
+      --bg: #f3f6f3;
+      --paper: #ffffff;
+      --ink: #18221c;
+      --muted: #66736b;
+      --line: #d7e0d8;
+      --green: #176b4d;
+      --green-soft: #e7f3ed;
+      --blue: #1769aa;
+      --blue-soft: #e8f3fc;
+      --amber: #996013;
+      --amber-soft: #fff4dc;
+      --red: #a53d37;
+      --red-soft: #fceceb;
+      --code: #14211b;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font: 16px/1.68 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    header {
+      color: #f7fff9;
+      background: linear-gradient(135deg, #123c2d, #176b4d);
+      padding: 44px 20px 36px;
+    }
+    .wrap, main { max-width: 1040px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 42px); line-height: 1.2; }
+    header p { margin: 0; color: #d9eee4; }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+    .badge {
+      border: 1px solid rgba(255,255,255,.32);
+      border-radius: 999px;
+      padding: 5px 11px;
+      font-size: 13px;
+      background: rgba(255,255,255,.09);
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: rgba(255,255,255,.94);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+    }
+    nav .wrap { display: flex; gap: 18px; overflow-x: auto; padding: 11px 20px; }
+    nav a { color: var(--ink); text-decoration: none; white-space: nowrap; font-size: 14px; }
+    nav a:hover { color: var(--green); }
+    main { padding: 28px 20px 70px; }
+    section { margin: 0 0 42px; scroll-margin-top: 60px; }
+    h2 {
+      margin: 0 0 15px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--ink);
+      font-size: 21px;
+    }
+    h3 { margin: 18px 0 8px; font-size: 16px; }
+    p { margin: 8px 0; }
+    code { font: 13px/1.5 Consolas, "Cascadia Mono", monospace; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .card h3 { margin-top: 0; }
+    .ok { border-top: 4px solid var(--green); }
+    .warn { border-top: 4px solid var(--amber); }
+    .status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      color: var(--green);
+      background: var(--green-soft);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .pending { color: var(--amber); background: var(--amber-soft); }
+    .code {
+      color: #e8f3ec;
+      background: var(--code);
+      border-radius: 10px;
+      padding: 14px 16px;
+      overflow: auto;
+      white-space: pre;
+      font: 13px/1.58 Consolas, "Cascadia Mono", monospace;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--paper);
+      border: 1px solid var(--line);
+    }
+    th, td { padding: 9px 11px; border-bottom: 1px solid var(--line); text-align: left; }
+    th { color: var(--muted); font-size: 13px; }
+    td { font-size: 14px; }
+    .callout {
+      border-left: 4px solid var(--green);
+      background: var(--green-soft);
+      padding: 12px 14px;
+      border-radius: 0 9px 9px 0;
+    }
+    .callout.warnbox { border-color: var(--amber); background: var(--amber-soft); }
+    ol, ul { padding-left: 22px; }
+    li { margin: 5px 0; }
+    .checklist { list-style: none; padding: 0; }
+    .checklist li {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 9px 0;
+      border-bottom: 1px dashed var(--line);
+    }
+    input[type="checkbox"] { margin-top: 6px; accent-color: var(--green); }
+    footer { text-align: center; color: var(--muted); font-size: 13px; padding-top: 20px; }
+    @media (max-width: 720px) {
+      .grid { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>USART1 LL 初始化记录</h1>
+      <p>FreeRTOS_LL_demo · 启明欣欣 F407 高配版 V6.1 · 结构体 LL Init</p>
+      <div class="badges">
+        <span class="badge">PA9 TX / PA10 RX</span>
+        <span class="badge">AF7</span>
+        <span class="badge">115200 8N1</span>
+        <span class="badge">PCLK2 84MHz</span>
+        <span class="badge">USE_FULL_LL_DRIVER</span>
+      </div>
+    </div>
+  </header>
+
+  <nav>
+    <div class="wrap">
+      <a href="#status">当前状态</a>
+      <a href="#hw">硬件</a>
+      <a href="#files">工程文件</a>
+      <a href="#conflict">HAL/LL 边界</a>
+      <a href="#init">初始化</a>
+      <a href="#printf">printf</a>
+      <a href="#link">链接错误</a>
+      <a href="#generate">生成后检查</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="status">
+      <h2>当前状态</h2>
+      <div class="grid">
+        <div class="card ok">
+          <h3><span class="status">USART1 轮询已接入</span></h3>
+          <p>PA9/PA10 结构体初始化、115200 8N1、阻塞发送和 <code>fputc</code> 已写入。</p>
+          <p>USB 仍保持软断开，不连主机测枚举。</p>
+        </div>
+        <div class="card warn">
+          <h3><span class="status pending">尚未做</span></h3>
+          <p>RX 中断、环形缓冲、DMA 都还没有。</p>
+          <p><code>USART1_IRQHandler</code> 写好前不要开 RXNE 和 NVIC。</p>
+        </div>
+      </div>
+      <p class="callout">
+        这是新页面，不覆盖
+        <code>_explain/usb_fs_ll_init.html</code> 和
+        <code>_explain/freertos_ll_demo_readme.html</code>。
+        工程说明见 <code>FreeRTOS_LL_demo/readme.txt</code>。
+      </p>
+    </section>
+
+    <section id="hw">
+      <h2>原理图与引脚</h2>
+      <table>
+        <thead><tr><th>项目</th><th>当前选择</th></tr></thead>
+        <tbody>
+          <tr><td>板卡</td><td>启明欣欣 STM32F407 开发板（高配版）V6.1</td></tr>
+          <tr><td>USART1 TX</td><td>PA9，AF7</td></tr>
+          <tr><td>USART1 RX</td><td>PA10，AF7，上拉</td></tr>
+          <tr><td>TTL 座</td><td>P20：U1_TX / U1_RX / GND</td></tr>
+          <tr><td>RS232</td><td>J6 + MAX232</td></tr>
+          <tr><td>USB FS</td><td>仍是 PA11/PA12，不抢 USART1</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="files">
+      <h2>头文件、宏和 Keil 源文件</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Hardware 头文件统一</h3>
+          <p>USB 和 USART1 的 <code>.h</code> 都写 <code>#include "stm32f4xx_hal.h"</code>。</p>
+          <p>不是 HAL 接管串口。USB 的 <code>ll_usb.h</code> 依赖 <code>HAL_StatusTypeDef</code>，USART 跟着同一套公共头，避免每个外设换一种 include。</p>
+        </div>
+        <div class="card">
+          <h3>usart1_ll.c 里这四个 include 够编译</h3>
+          <div class="code">#include "stm32f4xx_ll_usart.h"
+#include "stm32f4xx_ll_gpio.h"
+#include "stm32f4xx_ll_bus.h"
+#include &lt;stdio.h&gt;</div>
+          <p>不必再 include <code>stm32f4xx_ll_rcc.h</code>。<code>ll_bus.h</code> 仍要留着，用来开时钟和复位。</p>
+        </div>
+      </div>
+      <p class="callout warnbox">
+        结构体 <code>LL_GPIO_Init</code> / <code>LL_USART_Init</code> 被
+        <code>USE_FULL_LL_DRIVER</code> 包着。Keil 预处理器必须带上这个宏，
+        并且工程加入 <code>stm32f4xx_ll_gpio.c</code>、<code>stm32f4xx_ll_usart.c</code>、
+        <code>stm32f4xx_ll_rcc.c</code>。
+      </p>
+      <p>
+        <code>LL_USART_Init()</code> 内部调用 <code>LL_RCC_GetSystemClocksFreq()</code> 读取 PCLK2，
+        所以要 <code>ll_rcc.c</code>。它不重新配置 PLL，和 HAL 的 <code>SystemClock_Config()</code> 不抢系统时钟。
+      </p>
+      <p><strong>不要</strong>启用 <code>HAL_UART_MODULE_ENABLED</code>，不要加入 <code>stm32f4xx_hal_uart.c</code>。</p>
+    </section>
+
+    <section id="conflict">
+      <h2>HAL 与 LL 会不会冲突</h2>
+      <ul>
+        <li>系统时钟树只由 HAL 配置。</li>
+        <li>USART1 只由 LL 初始化。</li>
+        <li>PA9/PA10 只由 USART1 LL 配置；PA11/PA12 只由 USB LL 配置。</li>
+        <li>GPIOA 时钟可以 HAL 和 LL 各开一次，只是把同一位置 1。</li>
+      </ul>
+    </section>
+
+    <section id="init">
+      <h2>初始化与发送</h2>
+      <ol>
+        <li>开 GPIOA 时钟。</li>
+        <li>GPIO 结构体：PA9 TX 无上下拉，PA10 RX 上拉，AF7。</li>
+        <li>开 USART1 时钟并复位。</li>
+        <li><code>LL_USART_Disable</code> → <code>ConfigAsyncMode</code> → 填结构体 → <code>LL_USART_Init</code> → <code>Enable</code>。</li>
+        <li>发送先等 <code>TXE</code> 再写 DR；整包结束再等 <code>TC</code>。</li>
+      </ol>
+      <div class="code">USART1_LL_Init();
+USART1_LL_Send((uint8_t *)"Hello, World!\r\n", 15);
+printf("USART1 115200 8N1\r\n");</div>
+      <p class="callout warnbox">建议先初始化 USART1，再初始化 USB。USB 失败进 <code>Error_Handler</code> 时，串口已经能打字。</p>
+    </section>
+
+    <section id="printf">
+      <h2>printf 重定向</h2>
+      <p>ARM Compiler 5：打开 Keil <strong>Use MicroLIB</strong>，在 <code>usart1_ll.c</code> 里实现：</p>
+      <div class="code">int fputc(int ch, FILE *f)
+{
+    (void)f;
+    USART1_LL_SendByte((uint8_t)ch);
+    return ch;
+}</div>
+      <p>换行写 <code>\r\n</code>。不要在关中断或 FreeRTOS 临界区里调用 <code>printf</code>。</p>
+    </section>
+
+    <section id="link">
+      <h2>L6218E 是什么</h2>
+      <p>只 include 头文件、调用 <code>LL_GPIO_Init</code>，但 Keil 没加入对应 <code>.c</code>，链接阶段就会：</p>
+      <div class="code">Undefined symbol LL_GPIO_Init
+Undefined symbol LL_USART_Init</div>
+      <p>单项函数写在头文件里，不需要这些 <code>.c</code>。结构体 Init 必须加文件。少加 <code>ll_rcc.c</code> 时，下一条通常是 <code>Undefined symbol LL_RCC_GetSystemClocksFreq</code>。</p>
+    </section>
+
+    <section id="generate">
+      <h2>CubeMX Generate 后检查</h2>
+      <ul class="checklist">
+        <li><input type="checkbox" /> <span><code>USE_FULL_LL_DRIVER</code> 仍在 Keil Define 中。</span></li>
+        <li><input type="checkbox" /> <span><code>ll_gpio.c</code> / <code>ll_usart.c</code> / <code>ll_rcc.c</code> 仍在工程中。</span></li>
+        <li><input type="checkbox" /> <span><code>usart1_ll.c</code> 和 Include Path <code>..\Hardware\usart</code> 仍在。</span></li>
+        <li><input type="checkbox" /> <span><code>HAL_UART_MODULE_ENABLED</code> 仍是注释。</span></li>
+        <li><input type="checkbox" /> <span>Use MicroLIB 仍打开（若使用 printf）。</span></li>
+        <li><input type="checkbox" /> <span>PA9/PA10 与 PA11/PA12 没有被 Cube 重新配给别的模块。</span></li>
+      </ul>
+    </section>
+
+    <footer>对应 FreeRTOS_LL_demo/readme.txt 第十一至十三节。USB 说明见 usb_fs_ll_init.html。</footer>
+  </main>
+</body>
+</html>
