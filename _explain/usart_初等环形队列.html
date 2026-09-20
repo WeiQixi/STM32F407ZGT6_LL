@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>USART 初等环形队列</title>
+  <style>
+    :root {
+      --bg: #f3f6f8;
+      --paper: #ffffff;
+      --ink: #18221c;
+      --muted: #66736b;
+      --line: #d5e0e6;
+      --green: #176b4d;
+      --green-soft: #e7f3ed;
+      --blue: #1769aa;
+      --blue-soft: #e8f3fc;
+      --amber: #996013;
+      --amber-soft: #fff4dc;
+      --code: #14211b;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font: 16px/1.68 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    header {
+      color: #f7fbff;
+      background: linear-gradient(135deg, #123a4c, #1769aa);
+      padding: 44px 20px 36px;
+    }
+    .wrap, main { max-width: 1040px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 42px); line-height: 1.2; }
+    header p { margin: 0; color: #d7ebf5; }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+    .badge {
+      border: 1px solid rgba(255,255,255,.32);
+      border-radius: 999px;
+      padding: 5px 11px;
+      font-size: 13px;
+      background: rgba(255,255,255,.09);
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: rgba(255,255,255,.94);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+    }
+    nav .wrap { display: flex; gap: 18px; overflow-x: auto; padding: 11px 20px; }
+    nav a { color: var(--ink); text-decoration: none; white-space: nowrap; font-size: 14px; }
+    nav a:hover { color: var(--blue); }
+    main { padding: 28px 20px 70px; }
+    section { margin: 0 0 42px; scroll-margin-top: 60px; }
+    h2 {
+      margin: 0 0 15px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--ink);
+      font-size: 21px;
+    }
+    h3 { margin: 18px 0 8px; font-size: 16px; }
+    p { margin: 8px 0; }
+    code { font: 13px/1.5 Consolas, "Cascadia Mono", monospace; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .card h3 { margin-top: 0; }
+    .ok { border-top: 4px solid var(--green); }
+    .warn { border-top: 4px solid var(--amber); }
+    .status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      color: var(--green);
+      background: var(--green-soft);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .pending { color: var(--amber); background: var(--amber-soft); }
+    .code {
+      color: #e8f3ec;
+      background: var(--code);
+      border-radius: 10px;
+      padding: 14px 16px;
+      overflow: auto;
+      white-space: pre;
+      font: 13px/1.58 Consolas, "Cascadia Mono", monospace;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--paper);
+      border: 1px solid var(--line);
+    }
+    th, td { padding: 9px 11px; border-bottom: 1px solid var(--line); text-align: left; }
+    th { color: var(--muted); font-size: 13px; }
+    td { font-size: 14px; }
+    .callout {
+      border-left: 4px solid var(--blue);
+      background: var(--blue-soft);
+      padding: 12px 14px;
+      border-radius: 0 9px 9px 0;
+    }
+    .callout.warnbox { border-color: var(--amber); background: var(--amber-soft); }
+    ol, ul { padding-left: 22px; }
+    li { margin: 5px 0; }
+    footer { text-align: center; color: var(--muted); font-size: 13px; padding-top: 20px; }
+    @media (max-width: 720px) {
+      .grid { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>USART 初等环形队列</h1>
+      <p>FreeRTOS_LL_demo · 接收缓冲 · 中断入队 / main 出队回显</p>
+      <div class="badges">
+        <span class="badge">USART6 PC6/PC7 AF8</span>
+        <span class="badge">128 格 / 最多 127</span>
+        <span class="badge">丢新字节</span>
+        <span class="badge">不是终极版</span>
+      </div>
+    </div>
+  </header>
+
+  <nav>
+    <div class="wrap">
+      <a href="#scope">边界</a>
+      <a href="#hw">硬件</a>
+      <a href="#what">是什么</a>
+      <a href="#emptyfull">空和满</a>
+      <a href="#fn">两个函数</a>
+      <a href="#over">超过 128</a>
+      <a href="#isr">中断和 main</a>
+      <a href="#limit">不是终极版</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="scope">
+      <h2>本页只讲环形缓冲</h2>
+      <p>不覆盖下面这些已经分开的页面：</p>
+      <ul>
+        <li>USART 初始化：<code>_explain/usart1_ll_init.html</code></li>
+        <li>USB FS：<code>_explain/usb_fs_ll_init.html</code></li>
+        <li>FreeRTOS：<code>_explain/freertos_ll_demo_readme.html</code></li>
+      </ul>
+      <p>纯文本：<code>_explain/usart_初等环形队列.txt</code>。工程总说明：<code>FreeRTOS_LL_demo/readme.txt</code>。</p>
+    </section>
+
+    <section id="hw">
+      <h2>当前硬件</h2>
+      <p>串口已从 USART1 改到 USART6。缓冲逻辑一样，外设实例换成了 USART6。</p>
+      <table>
+        <thead><tr><th>项目</th><th>当前选择</th></tr></thead>
+        <tbody>
+          <tr><td>TX</td><td>PC6，AF8</td></tr>
+          <tr><td>RX</td><td>PC7，AF8，上拉</td></tr>
+          <tr><td>时钟</td><td>APB2，PCLK2 = 84MHz</td></tr>
+          <tr><td>格式</td><td>115200 8N1</td></tr>
+          <tr><td>座子</td><td>P13 UART6-TTL，不要插 P20</td></tr>
+          <tr><td>文件</td><td><code>Hardware/usart/usart6_ll.c</code></td></tr>
+          <tr><td>中断</td><td>必须叫 <code>USART6_IRQHandler</code></td></tr>
+        </tbody>
+      </table>
+      <p class="callout warnbox">PA9/PA10 已空出。USB 仍然不要把 PA9 配成 VBUS。</p>
+    </section>
+
+    <section id="what">
+      <h2>这是什么队列</h2>
+      <p>一块 128 字节数组，外加两个下标：</p>
+      <ul>
+        <li><code>head</code>：下一个空位，只由中断 <code>RxPush</code> 写。</li>
+        <li><code>tail</code>：下一个未读字节，只由 <code>main</code> 里 <code>ReadByte</code> 写。</li>
+      </ul>
+      <p>绕圈用 <code>(下标 + 1) % 128</code>。写到 127 的下一格是 0。</p>
+      <p>单生产者、单消费者；满了丢新字节；留一格区分空和满。这是初等写法，给现在的回显用。</p>
+    </section>
+
+    <section id="emptyfull">
+      <h2>空和满</h2>
+      <div class="grid">
+        <div class="card ok">
+          <h3>空</h3>
+          <p>看<strong>现在</strong>的两个下标：<code>head == tail</code>。</p>
+          <p>读写停在同一格，没有未读数据。</p>
+        </div>
+        <div class="card warn">
+          <h3>满</h3>
+          <p>先算 <code>next = (head + 1) % 128</code>，再和<strong>现在的</strong> <code>tail</code> 比。</p>
+          <p><code>next == tail</code> 就是满。再写会盖掉还没读走的。</p>
+        </div>
+      </div>
+      <p><code>(head + 1) % 128</code> 和 <code>(tail + 1) % 128</code> 结果相同，只是空的连带现象。代码里直接比 <code>head == tail</code>。</p>
+      <p>满了：不写缓冲，<code>head</code> 不改成 <code>next</code>，仍是原来的数。<code>next</code> 是局部变量，<code>return</code> 后就没了。</p>
+      <p>128 格最多存 <strong>127</strong> 字节。不留一格的话，满和空都会变成 <code>head == tail</code>。</p>
+    </section>
+
+    <section id="fn">
+      <h2>两个函数</h2>
+      <h3>RxPush：中断往里放</h3>
+      <div class="code">next = (head + 1) % 128;
+if (next == tail) return;     /* 满，丢这一字节，head 不动 */
+buf[head] = data;
+head = next;</div>
+      <h3>ReadByte：main 往外拿</h3>
+      <div class="code">if (data == 0) return 0;
+if (head == tail) return 0;   /* 空 */
+*data = buf[tail];
+tail = (tail + 1) % 128;
+return 1;</div>
+      <p><code>main</code> 里有货才回发：</p>
+      <div class="code">if (USART6_LL_ReadByte(&amp;ch)) {
+    USART6_LL_SendByte(ch);
+}</div>
+    </section>
+
+    <section id="over">
+      <h2>为什么能收超过 128 字节</h2>
+      <p>128 是<strong>同时</strong>最多暂存 127 字节，不是一辈子只能收 128。</p>
+      <p>中断推进 <code>head</code>，<code>main</code> 取走后 <code>tail</code> 跟上，同一格会写很多次。边收边回显时，缓冲里往往只有几字节，一次贴几百字节也能原样回来。</p>
+      <p>来得比取走快、未读顶到 127 时，<code>RxPush</code> 才丢新字节。</p>
+    </section>
+
+    <section id="isr">
+      <h2>中断可以打断 main，但不会把 main 停死</h2>
+      <p>RXNE 来了就插入 ISR：读 <code>DR</code>、入队、马上返回。<code>main</code> 从刚才那条指令接着跑，再 <code>ReadByte</code>、等 <code>TXE</code> 回发。</p>
+      <p>不要在 ISR 里 <code>while (!TXE)</code> 发送，不要在 ISR 里 <code>printf</code>。</p>
+      <p>NVIC 优先级 5，对齐 <code>configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY</code>。当前 ISR 不调 FreeRTOS API。</p>
+      <p>ORE 必须先读 <code>DR</code> 再 <code>return</code>，否则 <code>RXNEIE</code> 会让中断一直进。不要再调用 <code>LL_USART_ClearFlag_ORE()</code>，它会多读一次 <code>DR</code>。</p>
+    </section>
+
+    <section id="limit">
+      <h2>不是终极版</h2>
+      <table>
+        <thead><tr><th>现在</th><th>以后按需再换</th></tr></thead>
+        <tbody>
+          <tr><td><code>%</code> 绕圈，留一格</td><td>2 的幂用 <code>&amp; 127</code>；或加计数放满 128</td></tr>
+          <tr><td>满了丢新字节</td><td>要最新数据时改丢最旧的</td></tr>
+          <tr><td>逐字节中断</td><td>DMA + IDLE 收整包</td></tr>
+          <tr><td>main 空转读</td><td>FreeRTOS 队列 / StreamBuffer</td></tr>
+        </tbody>
+      </table>
+      <p class="callout warnbox">DMA 还没做。调度器还没启动，回显仍在 <code>main</code> 循环。USB 仍软断开。</p>
+      <p>上板：P13，115200 8N1，关掉本地回显。复位后先看到 <code>Hello, World!</code>，再键入应原样回来。</p>
+    </section>
+
+    <footer>对应 _explain/usart_初等环形队列.txt。不要覆盖 usart1_ll_init.html / usb_fs_ll_init.html / freertos_ll_demo_readme.html。</footer>
+  </main>
+</body>
+</html>

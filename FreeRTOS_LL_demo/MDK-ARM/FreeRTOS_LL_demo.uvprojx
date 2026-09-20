@@ -585,9 +585,9 @@
           <GroupName>Hardware/usart</GroupName>
           <Files>
             <File>
-              <FileName>usart1_ll.c</FileName>
+              <FileName>usart6_ll.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\Hardware\usart\usart1_ll.c</FilePath>
+              <FilePath>..\Hardware\usart\usart6_ll.c</FilePath>
             </File>
           </Files>
         </Group>

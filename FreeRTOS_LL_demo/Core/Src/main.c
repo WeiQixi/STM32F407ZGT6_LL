@@ -23,7 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "usb_fs_ll.h"
-#include "usart1_ll.h"
+#include "usart6_ll.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -92,15 +92,19 @@ int main(void)
   if (USB_FS_LL_Init() != HAL_OK) {
       Error_Handler();
   }
-  USART1_LL_Init();
-  USART1_LL_Send((uint8_t *)"Hello, World!\r\n", 15);
-  printf("USART1 115200 8N1\r\n");
+  USART6_LL_Init();
+  USART6_LL_Send((uint8_t *)"Hello, World!\r\n", 15);
+  printf("USART6 115200 8N1\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  uint8_t ch;
   while (1)
   {
+    if(USART6_LL_ReadByte(&ch)){
+      USART6_LL_SendByte(ch); // Echo back the received character
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
