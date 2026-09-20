@@ -1,7 +1,7 @@
-USART 初等环形队列
-==================
+USART 初等环形队列 readme
+========================
 
-本页只讲接收环形缓冲，不覆盖：
+本文件是 USART 初等环形队列专题的 readme，只讲接收环形缓冲，不覆盖：
 	USART 初始化		_explain/usart1_ll_init.html
 	USB FS				_explain/usb_fs_ll_init.html
 	FreeRTOS			_explain/freertos_ll_demo_readme.html

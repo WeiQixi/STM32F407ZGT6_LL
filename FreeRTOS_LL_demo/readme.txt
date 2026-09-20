@@ -82,7 +82,7 @@ FreeRTOS_LL_demo 工程说明
 	main 循环取出后原样回显。DMA 尚未做。
 
 	初始化记录：_explain/usart1_ll_init.html
-	环形队列：_explain/usart_初等环形队列.txt
+	环形队列 readme：_explain/usart_初等环形队列_readme.txt
 	网页：_explain/usart_初等环形队列.html
 
 五、HAL 与 LL
