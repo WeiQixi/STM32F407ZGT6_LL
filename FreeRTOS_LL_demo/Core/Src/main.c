@@ -25,6 +25,8 @@
 #include "usb_fs_ll.h"
 #include "usart6_ll.h"
 #include <stdio.h>
+#include "FreeRTOS.h"
+#include "task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -95,16 +97,21 @@ int main(void)
   USART6_LL_Init();
   USART6_LL_Send((uint8_t *)"Hello, World!\r\n", 15);
   printf("USART6 115200 8N1\r\n");
+
+  /* 栈 256 字 = 1024 字节，给 payload[64] 和组包留余量。
+ * 优先级 1，低于软件定时器任务（9），高于 Idle（0）。 */
+  if(xTaskCreate(USART6_LL_PktTask, "USART6_PktTask", 256, NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+    Error_Handler();
+  }
+  /* 启动后 SysTick 才会走进 xPortSysTickHandler。
+ * 成功则不会返回；返回说明堆不够创建 Idle。 */
+  vTaskStartScheduler();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  uint8_t ch;
   while (1)
   {
-    if(USART6_LL_ReadByte(&ch)){
-      USART6_LL_SendByte(ch); // Echo back the received character
-    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
