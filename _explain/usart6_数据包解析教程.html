@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>USART6 数据包解析教程</title>
+  <style>
+    :root {
+      --bg: #f3f6f8;
+      --paper: #ffffff;
+      --ink: #18221c;
+      --muted: #617068;
+      --line: #d5e0e6;
+      --blue: #1769aa;
+      --blue-soft: #e8f3fc;
+      --green: #176b4d;
+      --green-soft: #e7f3ed;
+      --amber: #95600f;
+      --amber-soft: #fff4dc;
+      --code: #14211b;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font: 16px/1.72 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    header { color: #f7fbff; background: #174b69; padding: 44px 20px 36px; }
+    .wrap, main { max-width: 1080px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: clamp(29px, 5vw, 42px); line-height: 1.2; }
+    header p { margin: 0; color: #d9edf6; }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+    .badge { border: 1px solid rgba(255,255,255,.34); border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: rgba(255,255,255,.96);
+      border-bottom: 1px solid var(--line);
+    }
+    nav .wrap { display: flex; gap: 18px; overflow-x: auto; padding: 11px 20px; }
+    nav a { color: var(--ink); text-decoration: none; white-space: nowrap; font-size: 14px; }
+    nav a:hover { color: var(--blue); }
+    main { padding: 30px 20px 72px; }
+    section { margin-bottom: 46px; scroll-margin-top: 60px; }
+    h2 { margin: 0 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--ink); font-size: 22px; }
+    h3 { margin: 20px 0 8px; font-size: 17px; }
+    p { margin: 8px 0; }
+    code { font: 13px/1.5 Consolas, "Cascadia Mono", monospace; }
+    ul, ol { padding-left: 23px; }
+    li { margin: 5px 0; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .card { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+    .card h3 { margin-top: 0; }
+    .ok { border-top: 4px solid var(--green); }
+    .warn { border-top: 4px solid var(--amber); }
+    .callout { border-left: 4px solid var(--blue); background: var(--blue-soft); padding: 12px 14px; border-radius: 0 8px 8px 0; }
+    .callout.warnbox { border-color: var(--amber); background: var(--amber-soft); }
+    .lesson { margin: 18px 0; padding: 16px 18px; background: var(--paper); border: 1px solid var(--line); border-left: 5px solid var(--green); }
+    .lesson strong { color: var(--green); }
+    .code {
+      color: #e8f3ec;
+      background: var(--code);
+      border-radius: 9px;
+      padding: 14px 16px;
+      overflow: auto;
+      white-space: pre;
+      font: 13px/1.6 Consolas, "Cascadia Mono", monospace;
+    }
+    table { width: 100%; border-collapse: collapse; background: var(--paper); border: 1px solid var(--line); }
+    th, td { padding: 9px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 13px; }
+    td { font-size: 14px; }
+    .pipeline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 16px 0; }
+    .stage { min-height: 112px; padding: 14px; background: var(--paper); border: 1px solid var(--line); border-top: 4px solid var(--blue); border-radius: 8px; }
+    .stage strong { display: block; margin-bottom: 6px; color: var(--blue); }
+    .stage small { display: block; margin-top: 7px; color: var(--muted); }
+    .protocol { display: grid; grid-template-columns: repeat(5, minmax(80px, 1fr)); gap: 6px; margin: 16px 0; }
+    .byte { padding: 13px 8px; text-align: center; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; }
+    .byte strong { display: block; color: var(--blue); font: 700 17px Consolas, monospace; }
+    .byte span { color: var(--muted); font-size: 12px; }
+    .flow { counter-reset: step; list-style: none; padding: 0; }
+    .flow li { position: relative; margin: 0 0 8px; padding: 10px 12px 10px 45px; background: var(--paper); border: 1px solid var(--line); }
+    .flow li::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      left: 12px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      color: white;
+      background: var(--blue);
+      text-align: center;
+      line-height: 22px;
+      font-size: 12px;
+    }
+    .timeline { border-left: 3px solid var(--line); margin-left: 10px; padding-left: 20px; }
+    .timeline > div { position: relative; margin: 0 0 16px; }
+    .timeline > div::before {
+      content: "";
+      position: absolute;
+      left: -27px;
+      top: 8px;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--blue);
+    }
+    .timeline strong { display: block; }
+    .muted { color: var(--muted); }
+    footer { padding-top: 18px; text-align: center; color: var(--muted); font-size: 13px; }
+    @media (max-width: 720px) {
+      .grid, .pipeline { grid-template-columns: 1fr; }
+      .protocol { grid-template-columns: repeat(2, 1fr); }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>从 USART 字节流到完整数据包</h1>
+      <p>用环形队列、长度字段和滑动重同步，手写一个能处理半包、粘包与噪声的解析器</p>
+      <div class="badges">
+        <span class="badge">教程：从需求到代码</span>
+        <span class="badge">USART6 · PC6 / PC7 · AF8</span>
+        <span class="badge">FreeRTOS 任务解包</span>
+        <span class="badge">AA 55 + LEN + DATA + XOR</span>
+      </div>
+    </div>
+  </header>
+
+  <nav>
+    <div class="wrap">
+      <a href="#goals">学习目标</a>
+      <a href="#stream">字节流问题</a>
+      <a href="#architecture">分层设计</a>
+      <a href="#ring">环形队列</a>
+      <a href="#protocol">协议设计</a>
+      <a href="#parser">解析器</a>
+      <a href="#walkthrough">字节推演</a>
+      <a href="#rtos">中断与任务</a>
+      <a href="#test">测试</a>
+      <a href="#mistakes">易错点</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="goals">
+      <h2>学习目标</h2>
+      <p>本页独立讲解“数据包解析代码是怎样设计出来的”。原来的初等环形队列网页保持不变。</p>
+      <div class="grid">
+        <div class="card ok"><h3>理解问题</h3><p>知道 UART 为什么不会自动告诉程序一包从哪里开始、在哪里结束。</p></div>
+        <div class="card"><h3>设计接收通道</h3><p>让 ISR 只收字节，让任务负责较慢的协议解析。</p></div>
+        <div class="card"><h3>写出解析器</h3><p>处理半包、粘包、重复包头、噪声和错误校验。</p></div>
+        <div class="card"><h3>验证异常路径</h3><p>不仅测试正常包，也主动发送错误包观察重新同步。</p></div>
+      </div>
+      <p class="callout">对应源码：<code>FreeRTOS_LL_demo/Hardware/usart/usart6_ll.c</code>。硬件为 P13 UART6-TTL，115200 8N1。</p>
+    </section>
+
+    <section id="stream">
+      <h2>第一章：UART 给你的只是连续字节</h2>
+      <p>USART 硬件只保证字节按顺序到达。它不知道什么叫“一个业务数据包”，也不会自动处理以下情况。</p>
+      <div class="grid">
+        <div class="card">
+          <h3>半包</h3>
+          <div class="code">第一次到达：AA 55 02 48
+稍后才到：69 23</div>
+          <p>第一次检查时帧还不完整，已经收到的字节必须保留。</p>
+        </div>
+        <div class="card">
+          <h3>粘包</h3>
+          <div class="code">AA 55 02 48 69 23 AA 55 01 41 40</div>
+          <p>两帧连续到达，硬件不会在两帧中间插入分隔通知。</p>
+        </div>
+        <div class="card">
+          <h3>前置噪声</h3>
+          <div class="code">11 22 33 AA 55 02 48 69 23</div>
+          <p>解析器必须跳过无效字节，重新找到真正的包头。</p>
+        </div>
+        <div class="card warn">
+          <h3>错误包头或校验</h3>
+          <p>解析失败后不能把整个缓冲区清空，因为错误字节后面可能紧跟着正常帧。</p>
+        </div>
+      </div>
+      <div class="lesson"><strong>第一个设计结论：</strong>“收到一个字节”和“收到一个完整包”是两件事，必须放在不同层处理。</div>
+    </section>
+
+    <section id="architecture">
+      <h2>第二章：先分层，再开始写函数</h2>
+      <div class="pipeline" aria-label="USART 数据包接收架构">
+        <div class="stage"><strong>1. USART ISR</strong>读取 DR，处理 ORE。<small>越短越好</small></div>
+        <div class="stage"><strong>2. 环形队列</strong>保存尚未解析的原始字节。<small>解耦中断与任务</small></div>
+        <div class="stage"><strong>3. ReadPacket</strong>找包头、读长度、等待半包、校验。<small>一次最多返回一帧</small></div>
+        <div class="stage"><strong>4. PktTask</strong>处理纯 DATA，当前测试为原样回发。<small>业务不进入 ISR</small></div>
+      </div>
+      <h3>写代码前先确定四条不变量</h3>
+      <ol>
+        <li><code>head</code> 只由 ISR 修改，<code>tail</code> 只由接收任务修改。</li>
+        <li>没有确认错误或成功前，解析器不移动 <code>tail</code>。</li>
+        <li>错误时只丢一个字节，避免连带丢掉后面的正常帧。</li>
+        <li>ISR 不等待发送、不打印、不解包。</li>
+      </ol>
+      <p class="callout">这些不变量比某一行代码更重要。后面的辅助函数都围绕它们设计。</p>
+    </section>
+
+    <section id="ring">
+      <h2>第三章：用环形队列积压原始字节</h2>
+      <p>普通数组若不断删除队头，需要频繁搬移数据；环形队列只移动下标，适合持续接收。</p>
+      <div class="grid">
+        <div class="card ok">
+          <h3>ISR：单生产者</h3>
+          <p><code>head</code> 指向下一个可写位置，只由 <code>RxPush()</code> 推进。</p>
+        </div>
+        <div class="card">
+          <h3>任务：单消费者</h3>
+          <p><code>tail</code> 指向下一个未读位置，只由读取或解析函数推进。</p>
+        </div>
+      </div>
+      <p>空：<code>head == tail</code>。满：<code>((head + 1) &amp; MASK) == tail</code>。</p>
+      <p>数组有256格，故意留一格区分空和满，所以最多同时积压255字节。</p>
+      <div class="code">USART6_RX_BUF_SIZE = 256
+USART6_RX_MASK     = 255
+
+(254 + 1) &amp; 255 = 255
+(255 + 1) &amp; 255 = 0      /* 自动回到数组开头 */</div>
+      <h3>为什么先写数组，再发布 head</h3>
+      <div class="code">buf[head] = data;    /* 数据先真正写入数组 */
+head = next;          /* 再通知任务：有新字节可读 */</div>
+      <p>如果顺序反过来，任务可能先看到新的 <code>head</code>，随后读到尚未写好的数组内容。</p>
+      <h3>解析器需要的三个辅助函数</h3>
+      <table>
+        <thead><tr><th>函数</th><th>作用</th><th>是否移动 tail</th></tr></thead>
+        <tbody>
+          <tr><td><code>RxCount()</code></td><td>计算当前未读字节数</td><td>否</td></tr>
+          <tr><td><code>RxPeek(offset)</code></td><td>查看 tail 后第 offset 个字节</td><td>否</td></tr>
+          <tr><td><code>RxDrop(n)</code></td><td>确认后消费或丢弃 n 个字节</td><td>是</td></tr>
+        </tbody>
+      </table>
+      <div class="lesson"><strong>核心思路：</strong>Peek 与 Drop 分开，相当于“先检查、后提交”。检查失败前不会破坏原始字节。</div>
+    </section>
+
+    <section id="protocol">
+      <h2>第四章：设计一种可以切分粘包的帧格式</h2>
+      <div class="protocol" aria-label="USART6 数据包字段">
+        <div class="byte"><strong>AA</strong><span>SOF0</span></div>
+        <div class="byte"><strong>55</strong><span>SOF1</span></div>
+        <div class="byte"><strong>LEN</strong><span>DATA 长度</span></div>
+        <div class="byte"><strong>DATA</strong><span>0～64字节</span></div>
+        <div class="byte"><strong>XOR</strong><span>异或校验</span></div>
+      </div>
+      <table>
+        <thead><tr><th>字段</th><th>为什么需要</th><th>缺少它会怎样</th></tr></thead>
+        <tbody>
+          <tr><td>SOF0 / SOF1</td><td>从噪声中寻找候选起点</td><td>出错后很难重新同步</td></tr>
+          <tr><td>LEN</td><td>明确 DATA 的结束位置，直接切开粘包</td><td>只能依赖超时或结束符猜边界</td></tr>
+          <tr><td>DATA</td><td>交给业务层的有效载荷</td><td>协议没有实际内容</td></tr>
+          <tr><td>XOR</td><td>检查 LEN 和 DATA 是否出现常见错误</td><td>可能把坏包交给业务层</td></tr>
+        </tbody>
+      </table>
+      <h3>载荷为 “Hi”</h3>
+      <div class="code">DATA = 48 69
+LEN  = 02
+XOR  = 02 ^ 48 ^ 69 = 23
+整帧 = AA 55 02 48 69 23</div>
+      <ul>
+        <li>LEN 不包含包头、LEN 自身和 XOR。</li>
+        <li>最大完整帧长度：<code>2 + 1 + 64 + 1 = 68</code> 字节。</li>
+        <li>XOR 适合教学和轻量校验；正式协议可以换成 CRC16。</li>
+      </ul>
+    </section>
+
+    <section id="parser">
+      <h2>第五章：按“检查 → 等待 → 提交”写解析器</h2>
+      <p><code>ReadPacket()</code> 始终从当前 <code>tail</code> 开始。数据不足就返回0，成功就返回1；只有丢掉错误字节时才继续内部循环。</p>
+      <ol class="flow">
+        <li>包头不足：保留队列，等待 ISR 继续接收。</li>
+        <li>SOF 不匹配：丢1字节，重新查找包头。</li>
+        <li>LEN 尚未到达：保留队列并返回。</li>
+        <li>LEN 超过0～64：丢1字节，重新同步。</li>
+        <li>完整帧未到齐：保留半包，最多等待20ms。</li>
+        <li>半包超时或 XOR 错误：丢1字节，重新同步。</li>
+        <li>校验通过：复制 DATA、消费整帧、返回1。</li>
+      </ol>
+      <h3>先写伪代码，再翻译成 C</h3>
+      <div class="code">循环：
+    n = 当前未读字节数
+    如果包头都不够：返回 0
+
+    如果 SOF0 错：丢 1 字节，继续
+    如果 SOF1 错：丢 1 字节，继续
+    如果 LEN 还没到：返回 0
+    如果 LEN 非法：丢 1 字节，继续
+
+    need = 包头 + LEN字段 + DATA + XOR
+    如果 n &lt; need：
+        未超时：保留半包，返回 0
+        已超时：丢 1 字节，继续
+
+    如果 XOR 错：丢 1 字节，继续
+
+    复制 DATA
+    消费 need 个字节
+    返回 1</div>
+      <h3>为什么错误时只丢一个字节</h3>
+      <p>当前候选起点不成立，只能证明第一个字节不是正确起点，不能证明后面的整段都无效。滑动一个字节重新检查，是最保守的重新同步方式。</p>
+    </section>
+
+    <section id="walkthrough">
+      <h2>第六章：用真实字节流推演执行过程</h2>
+      <h3>正常帧：AA 55 02 48 69 23</h3>
+      <table>
+        <thead><tr><th>检查</th><th>读取位置</th><th>结果</th></tr></thead>
+        <tbody>
+          <tr><td>包头</td><td><code>Peek(0)=AA</code>，<code>Peek(1)=55</code></td><td>通过</td></tr>
+          <tr><td>长度</td><td><code>Peek(2)=02</code></td><td><code>dlen=2</code></td></tr>
+          <tr><td>整帧长度</td><td><code>need=2+1+2+1</code></td><td>需要6字节</td></tr>
+          <tr><td>校验</td><td><code>02 ^ 48 ^ 69</code></td><td>得到23，与帧尾相同</td></tr>
+          <tr><td>提交</td><td>复制48 69，<code>Drop(6)</code></td><td>返回1</td></tr>
+        </tbody>
+      </table>
+
+      <h3>前置噪声：11 22 33 AA 55 02 48 69 23</h3>
+      <div class="timeline">
+        <div><strong>tail 指向11</strong>不是 AA，<code>Drop(1)</code>。</div>
+        <div><strong>tail 指向22</strong>仍不是 AA，再 <code>Drop(1)</code>。</div>
+        <div><strong>tail 指向33</strong>仍不是 AA，再 <code>Drop(1)</code>。</div>
+        <div><strong>tail 指向AA</strong>后面是55，按正常帧解析。</div>
+      </div>
+
+      <h3>重复包头：AA 55 AA 55 02 48 69 23</h3>
+      <div class="timeline">
+        <div><strong>第一次候选</strong>第三个字节被当成 LEN，即 <code>0xAA=170</code>，超过64。</div>
+        <div><strong>只丢第一个AA</strong>队头变成 <code>55 AA 55...</code>。</div>
+        <div><strong>55不是SOF0</strong>再丢一个字节。</div>
+        <div><strong>重新对齐</strong>剩下 <code>AA 55 02 48 69 23</code>，正常解析。</div>
+      </div>
+
+      <h3>粘包：两帧一次到达</h3>
+      <div class="code">AA 55 02 48 69 23 | AA 55 01 41 40
+&lt;------ 第一帧 ------&gt;   &lt;---- 第二帧 ---&gt;</div>
+      <p>第一次调用只消费第一帧的6字节。第二帧仍在队列中；任务回发第一帧后立即进入下一轮，再取第二帧。</p>
+      <div class="lesson"><strong>粘包不是错误：</strong>它只是队列里同时存在多帧。协议有 LEN，解析器逐帧消费即可。</div>
+    </section>
+
+    <section id="rtos">
+      <h2>第七章：把解析器放进 FreeRTOS 任务</h2>
+      <table>
+        <thead><tr><th>执行位置</th><th>负责什么</th><th>禁止什么</th></tr></thead>
+        <tbody>
+          <tr><td>USART6 ISR</td><td>读 DR、处理 ORE、字节入队、立即返回</td><td>等待 TXE、printf、解包、回发</td></tr>
+          <tr><td>USART6_PktTask</td><td>调用 ReadPacket，成功后处理或回发 DATA</td><td>同时调用 ReadByte 抢同一个 tail</td></tr>
+          <tr><td>main</td><td>初始化、创建任务、启动调度器</td><td>继续运行旧的逐字节回显</td></tr>
+        </tbody>
+      </table>
+      <div class="timeline">
+        <div><strong>RXNE 中断</strong>读取一个字节，推入队列，马上返回。</div>
+        <div><strong>PktTask 获得 CPU</strong>调用 <code>ReadPacket()</code>。</div>
+        <div><strong>帧还不完整</strong>返回0，任务 <code>vTaskDelay(1)</code>，ISR 继续收字节。</div>
+        <div><strong>帧完整且校验正确</strong>返回1，任务得到纯 DATA，再调用 <code>SendPacket()</code>。</div>
+      </div>
+    </section>
+
+    <section id="test">
+      <h2>第八章：上板测试正常路径和错误路径</h2>
+      <p class="callout warnbox">P13，115200 8N1；发送区和接收区都选择 HEX，关闭本地回显。ASCII 模式发送字符“AA”，线上是 <code>41 41</code>，不是真正的 <code>0xAA</code>。</p>
+      <table>
+        <thead><tr><th>目的</th><th>发送（HEX）</th><th>预期结果</th></tr></thead>
+        <tbody>
+          <tr><td>正常包</td><td><code>AA 55 02 48 69 23</code></td><td>原样回发</td></tr>
+          <tr><td>XOR错误</td><td><code>AA 55 02 48 69 00</code></td><td>无回包</td></tr>
+          <tr><td>重复包头</td><td><code>AA 55 AA 55 02 48 69 23</code></td><td>只回正常帧</td></tr>
+          <tr><td>粘包</td><td><code>AA 55 02 48 69 23 AA 55 01 41 40</code></td><td>依次回两帧</td></tr>
+          <tr><td>前置噪声</td><td><code>11 22 33 AA 55 02 48 69 23</code></td><td>丢噪声，只回正常帧</td></tr>
+          <tr><td>DATA含包头</td><td><code>AA 55 03 AA 55 01 FD</code></td><td>整帧回发，不拆包</td></tr>
+          <tr><td>空包</td><td><code>AA 55 00 00</code></td><td>当前允许，原样回发</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="mistakes">
+      <h2>第九章：常见错误、边界与练习</h2>
+      <div class="grid">
+        <div class="card warn"><h3>在 ISR 中解包或回发</h3><p>等待 TXE/TC 会延长中断时间，影响其他中断和任务。</p></div>
+        <div class="card warn"><h3>边检查边移动 tail</h3><p>遇到假包头时无法恢复原始字节。应先 Peek，最后统一 Drop。</p></div>
+        <div class="card warn"><h3>错误时清空整个队列</h3><p>坏字节后面可能紧跟正常帧。只丢一个字节更容易重新同步。</p></div>
+        <div class="card warn"><h3>ReadByte 与 ReadPacket 混用</h3><p>两者都会修改同一个 tail，会把一帧拆散。</p></div>
+      </div>
+      <h3>当前实现边界</h3>
+      <ul>
+        <li>接收仍是逐字节 RXNE 中断，DMA + IDLE 尚未实现。</li>
+        <li>队列满时丢新字节，当前没有溢出计数。</li>
+        <li>XOR 不是强校验，正式协议可改用 CRC16。</li>
+        <li>发送仍轮询等待 TXE/TC，不能在 ISR 中调用。</li>
+      </ul>
+      <h3>课后自测</h3>
+      <ol>
+        <li>为什么数组有256格，却只能同时存255字节？</li>
+        <li>为什么 RxPush 必须先写数组，再更新 head？</li>
+        <li>为什么错误 XOR 后不直接清空整个队列？</li>
+        <li>DATA 中出现 AA 55，为什么不会被拆成新包？</li>
+        <li>把 XOR 换成 CRC16 时，帧格式和 need 应怎样修改？</li>
+      </ol>
+      <p class="callout">能不看源码回答这五题，说明已经理解了解析器的设计，而不只是记住函数名。</p>
+    </section>
+
+    <footer>独立教材页 · 源码：Hardware/usart/usart6_ll.c · 原初等环形队列网页保持不变</footer>
+  </main>
+</body>
+</html>
