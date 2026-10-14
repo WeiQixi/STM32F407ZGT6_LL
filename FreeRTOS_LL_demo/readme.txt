@@ -8,15 +8,15 @@ FreeRTOS_LL_demo 工程说明
 	USB OTG FS LL	初始化框架已写，软断开，还不能枚举。
 	USART6 LL	PC6/PC7，DMA 循环接收 + 软件队列 + 数据包解析与回发。
 
-详细说明分开三页，不要互相覆盖：
+详细说明按模块分开，不要互相覆盖：
 
-	FreeRTOS	_explain/freertos_ll_demo_readme.html
-	USB FS		_explain/usb_fs_ll_init.html
-	USART 初始化	_explain/usart1_ll_init.html（文件名沿用）
+	FreeRTOS	_explain/freertos/freertos_ll_demo_readme.html
+	USB FS		_explain/usb/usb_fs_ll_init.html
+	USART6 初始化	_explain/usart/usart6/driver/01_usart6_初始化.html
 
-环形队列网页：_explain/usart_初等环形队列.html
-数据包解析教程：_explain/usart6_数据包解析教程.html
-数据包解析动画：_explain/usart6_数据包解析动画.html
+环形队列网页：_explain/usart/basic/usart_初等环形队列.html
+数据包解析教程：_explain/usart/usart6/packet/usart6_数据包解析教程.html
+数据包解析动画：_explain/usart/usart6/packet/usart6_数据包解析动画.html
 
 一、工程环境
 	MCU：STM32F407ZGT6，Cortex-M4F。
@@ -56,7 +56,7 @@ FreeRTOS_LL_demo 工程说明
 	任务负责解析 USART6 数据包并按相同协议回发。
 	任务中优先 vTaskDelay()；不要在关中断或临界区里 HAL_Delay() / printf。
 
-	网页：_explain/freertos_ll_demo_readme.html
+	网页：_explain/freertos/freertos_ll_demo_readme.html
 
 三、USB OTG FS（已经在工程里，未完成枚举）
 	PA11 = DM，PA12 = DP，AF10，内置 FS PHY，Device Only。
@@ -67,7 +67,7 @@ FreeRTOS_LL_demo 工程说明
 	FIFO、EP0、OTG_FS_IRQHandler、描述符都还没有。
 	不要连接主机测枚举。
 
-	网页：_explain/usb_fs_ll_init.html
+	网页：_explain/usb/usb_fs_ll_init.html
 
 四、USART6
 	原理图：PC6 = USART6_TX，PC7 = USART6_RX，AF8。
@@ -85,9 +85,13 @@ FreeRTOS_LL_demo 工程说明
 	数据包解析和 FreeRTOS 回发任务已接入。
 
 	网页：
-		_explain/usart1_ll_init.html
-		_explain/usart6_数据包解析教程.html
-		_explain/usart6_数据包解析动画.html
+		_explain/usart/usart1/usart1_ll_init.html
+		_explain/usart/usart6/driver/01_usart6_初始化.html
+		_explain/usart/usart6/driver/02_usart6_无DMA收发.html
+		_explain/usart/usart6/driver/03_usart6_DMA初始化.html
+		_explain/usart/usart6/driver/04_usart6_DMA接收与轮询发送.html
+		_explain/usart/usart6/packet/usart6_数据包解析教程.html
+		_explain/usart/usart6/packet/usart6_数据包解析动画.html
 
 五、HAL 与 LL
 	HAL：系统时钟、HAL_Init、SysTick。
@@ -116,9 +120,13 @@ USART6 环形队列与数据包解析
 ==========================
 
 相关网页：
-	初等环形队列：_explain/usart_初等环形队列.html
-	数据包解析教程：_explain/usart6_数据包解析教程.html
-	交互解析动画：_explain/usart6_数据包解析动画.html
+	初等环形队列：_explain/usart/basic/usart_初等环形队列.html
+	USART6初始化：_explain/usart/usart6/driver/01_usart6_初始化.html
+	无DMA收发：_explain/usart/usart6/driver/02_usart6_无DMA收发.html
+	DMA初始化：_explain/usart/usart6/driver/03_usart6_DMA初始化.html
+	DMA接收与轮询发送：_explain/usart/usart6/driver/04_usart6_DMA接收与轮询发送.html
+	数据包解析教程：_explain/usart/usart6/packet/usart6_数据包解析教程.html
+	交互解析动画：_explain/usart/usart6/packet/usart6_数据包解析动画.html
 
 解析动画使用示例字节 AA 55 AA 55 02 48 69 23，可播放、暂停、
 单步查看 Count、Peek、Drop、tail 移动、非法 LEN 重新同步和 XOR 校验。

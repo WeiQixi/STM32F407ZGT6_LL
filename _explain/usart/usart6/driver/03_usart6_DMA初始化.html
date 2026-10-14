@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>USART6 教程 3：DMA接收初始化</title><link rel="stylesheet" href="usart6_driver.css">
+</head>
+<body>
+<header><div class="wrap">
+  <h1>USART6 教程 3：DMA接收初始化</h1>
+  <p>配置DMA2 Stream1 Channel5，使USART6每收到一个字节就由DMA从DR搬到内存。本页专注初始化寄存器与参数。</p>
+  <div class="badges"><span class="badge">DMA2</span><span class="badge">Stream1</span><span class="badge">Channel5</span><span class="badge">循环模式</span><span class="badge">256字节</span></div>
+</div></header>
+<nav><div class="wrap"><a href="01_usart6_初始化.html">1 初始化</a><a href="02_usart6_无DMA收发.html">2 无DMA收发</a><a class="current" href="03_usart6_DMA初始化.html">3 DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">4 DMA接收</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
+<main>
+<section>
+  <h2>1. DMA接收的定义与映射</h2>
+  <p>DMA是Direct Memory Access。USART6接收完成后产生DMA请求，DMA控制器读取 <code>USART6-&gt;DR</code>，再把字节写入内存。CPU负责初始化和批量处理，逐字节搬运动作由DMA硬件执行。</p>
+  <div class="path"><div class="node"><strong>USART6_RX请求</strong>字节到达产生请求</div><div class="arrow">→</div><div class="node"><strong>Channel5</strong>选择请求来源</div><div class="arrow">→</div><div class="node"><strong>DMA2 Stream1</strong>执行传输配置</div><div class="arrow">→</div><div class="node"><strong>内存数组</strong>保存接收字节</div></div>
+  <div class="callout"><strong>Stream与Channel：</strong>Stream1是一组具有地址、长度、模式和状态寄存器的传输通道；Channel5选择该Stream接收USART6_RX请求。映射来自STM32F407参考手册/数据手册，不能任意组合。</div>
+</section>
+<section>
+  <h2>2. 初始化变量与硬件对象</h2>
+  <table><thead><tr><th>对象</th><th>初始值</th><th>含义</th></tr></thead><tbody>
+    <tr><td><code>usart6_dma_rx_buf[256]</code></td><td>静态数组</td><td>DMA循环写入的目标内存</td></tr>
+    <tr><td><code>usart6_dma_rx_pos</code></td><td>0</td><td>软件下一次从DMA数组读取的位置</td></tr>
+    <tr><td><code>PAR</code></td><td><code>&amp;USART6-&gt;DR</code></td><td>外设端地址，整个接收过程保持固定</td></tr>
+    <tr><td><code>M0AR</code></td><td>DMA数组首地址</td><td>内存端起始地址，传输后自动递增</td></tr>
+    <tr><td><code>NDTR</code></td><td>256</td><td>当前一轮剩余传输次数，每搬一个字节减1</td></tr>
+  </tbody></table>
+</section>
+<section>
+  <h2>3. DMA传输参数</h2>
+  <table><thead><tr><th>配置</th><th>当前选择</th><th>作用</th></tr></thead><tbody>
+    <tr><td>Direction</td><td>PERIPH_TO_MEMORY</td><td>数据从USART6 DR流向内存数组</td></tr>
+    <tr><td>Mode</td><td>CIRCULAR</td><td>写完256字节后，NDTR重装并从数组0继续</td></tr>
+    <tr><td>Peripheral increment</td><td>NOINCREMENT</td><td>每次都读取同一个DR地址</td></tr>
+    <tr><td>Memory increment</td><td>INCREMENT</td><td>目标地址依次走过数组0～255</td></tr>
+    <tr><td>Data alignment</td><td>BYTE / BYTE</td><td>外设端和内存端每次传输8位</td></tr>
+    <tr><td>FIFO</td><td>关闭，直接模式</td><td>USART每次产生一个字节请求，直接写入目标内存</td></tr>
+    <tr><td>Priority</td><td>HIGH</td><td>参与DMA控制器内部仲裁时使用高优先级</td></tr>
+  </tbody></table>
+</section>
+<section>
+  <h2>4. 完整初始化顺序</h2>
+  <ol class="steps">
+    <li>打开DMA2的AHB1时钟。</li>
+    <li>禁用Stream1并等待EN位清零；停止状态下才能修改通道、地址和NDTR。</li>
+    <li>选择Channel5，配置方向、循环模式、地址递增、数据宽度和优先级。</li>
+    <li>关闭FIFO，配置PAR为USART6 DR，配置M0AR为DMA接收数组首地址。</li>
+    <li>把NDTR装入256，清除HT、TC、TE、DME和FE旧标志。</li>
+    <li>把软件读取位置 <code>usart6_dma_rx_pos</code> 置0。</li>
+    <li>开启HT、TC、TE、DME中断，最后启用Stream1。</li>
+    <li>回到USART6初始化，开启USART6的DMA接收请求并启用USART6。</li>
+  </ol>
+  <div class="code">USART6_LL_RxDmaInit();
+LL_USART_EnableDMAReq_RX(USART6);
+LL_USART_Enable(USART6);</div>
+  <p>该顺序先建立完整DMA接收路径，再让USART6开始接收，覆盖启用后到达的第一个字节。</p>
+</section>
+<section>
+  <h2>5. NDTR与DMA写入位置</h2>
+  <p><code>NDTR</code>表示当前一轮剩余传输次数。DMA数组大小为256时，下一写入位置按以下公式换算：</p>
+  <div class="code">dma_pos = (256 - NDTR) &amp; 255;</div>
+  <table><thead><tr><th>接收进度</th><th>NDTR</th><th>dma_pos</th><th>下一写入位置</th></tr></thead><tbody>
+    <tr><td>本轮刚开始</td><td>256</td><td>0</td><td>数组[0]</td></tr>
+    <tr><td>已搬3字节</td><td>253</td><td>3</td><td>数组[3]</td></tr>
+    <tr><td>已搬128字节</td><td>128</td><td>128</td><td>数组[128]</td></tr>
+    <tr><td>一轮结束并回绕</td><td>自动重装256</td><td>0</td><td>数组[0]</td></tr>
+  </tbody></table>
+</section>
+<section>
+  <h2>6. DMA中断的初始化范围</h2>
+  <div class="grid">
+    <div class="card green"><h3>数据进度事件</h3><p><strong>HT</strong>：前128字节完成。</p><p><strong>TC</strong>：后128字节完成，一轮结束。</p></div>
+    <div class="card amber"><h3>错误事件</h3><p><strong>TE</strong>：传输错误。</p><p><strong>DME</strong>：直接模式错误。</p><p><strong>FE</strong>：FIFO错误标志；当前直接模式仍负责清除残留状态。</p></div>
+  </div>
+  <p>初始化只负责允许事件产生中断；第四页说明中断发生后如何Drain新增字节、处理IDLE并在错误后重启Stream。</p>
+  <div class="callout warn"><strong>当前实现范围：</strong>本页所有DMA配置均服务于USART6_RX。发送方向仍由CPU轮询TXE/TC；USART6_TX的DMA Stream映射、发送缓冲区和发送完成状态机尚未实现。</div>
+</section>
+<footer>下一页：DMA循环接收、IDLE提交与轮询发送</footer>
+</main></body></html>

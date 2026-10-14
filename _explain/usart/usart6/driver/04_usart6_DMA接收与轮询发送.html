@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>USART6 教程 4：DMA接收与轮询发送</title><link rel="stylesheet" href="usart6_driver.css">
+</head>
+<body>
+<header><div class="wrap">
+  <h1>USART6 教程 4：DMA接收与轮询发送</h1>
+  <p>当前分支的完整底层数据流：DMA循环接收，HT/TC/IDLE提交到软件队列，发送使用TXE/TC轮询。</p>
+  <div class="badges"><span class="badge">RX：DMA</span><span class="badge">TX：轮询</span><span class="badge">HT / TC / IDLE</span><span class="badge">TE / DME恢复</span></div>
+</div></header>
+<nav><div class="wrap"><a href="01_usart6_初始化.html">1 初始化</a><a href="02_usart6_无DMA收发.html">2 无DMA收发</a><a href="03_usart6_DMA初始化.html">3 DMA初始化</a><a class="current" href="04_usart6_DMA接收与轮询发送.html">4 DMA接收</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
+<main>
+<section>
+  <h2>1. 当前实现状态</h2>
+  <div class="grid">
+    <div class="card green"><h3><span class="state">已实现</span> DMA接收</h3><p>USART6_RX → DMA2 Stream1 Channel5 → 256字节DMA循环缓冲区。</p><p>HT、TC与IDLE把新增字节提交到软件环形队列。</p></div>
+    <div class="card blue"><h3><span class="state">已实现</span> 轮询发送</h3><p><code>USART6_LL_SendByte()</code>等待TXE后写DR。</p><p><code>USART6_LL_Send()</code>最后等待TC。</p></div>
+    <div class="card amber"><h3><span class="state future">后续扩展</span> DMA发送</h3><p>当前源码没有USART6_TX DMA Stream、发送队列和完成回调。</p><p>因此当前名称准确写作“DMA接收与轮询发送”。</p></div>
+    <div class="card"><h3>协议层</h3><p>AA 55、LEN和XOR由 <code>usart6_packet.c</code> 处理。</p><p>本页只讲原始字节如何进入和离开USART6。</p></div>
+  </div>
+</section>
+<section>
+  <h2>2. 接收字节的完整路径</h2>
+  <div class="path"><div class="node"><strong>PC7</strong>串口电平</div><div class="arrow">→</div><div class="node"><strong>USART6 DR</strong>还原出的字节</div><div class="arrow">→</div><div class="node"><strong>DMA数组</strong><code>usart6_dma_rx_buf[]</code></div><div class="arrow">→</div><div class="node"><strong>RxDmaDrain</strong>复制新增区间</div><div class="arrow">→</div><div class="node"><strong>软件队列</strong><code>usart6_rx_buf[]</code></div><div class="arrow">→</div><div class="node"><strong>任务</strong>查看并消费</div></div>
+  <div class="callout"><strong>两个缓冲区：</strong>DMA数组承接硬件连续写入；软件环形队列承接任务异步消费。Drain把两个缓冲区连接起来。</div>
+</section>
+<section>
+  <h2>3. 接收相关变量</h2>
+  <table><thead><tr><th>变量</th><th>含义</th><th>修改者</th><th>变化规则</th></tr></thead><tbody>
+    <tr><td><code>usart6_dma_rx_buf[256]</code></td><td>DMA循环写入数组</td><td>DMA2硬件</td><td>0→255→0循环覆盖</td></tr>
+    <tr><td><code>NDTR</code></td><td>本轮剩余传输次数</td><td>DMA2硬件</td><td>256递减到0，循环模式自动重装</td></tr>
+    <tr><td><code>dma_pos</code></td><td>DMA下一写入位置的快照</td><td><code>RxDmaDrain()</code>计算</td><td><code>(256 - NDTR) &amp; 255</code></td></tr>
+    <tr><td><code>usart6_dma_rx_pos</code></td><td>软件下一次读取DMA数组的位置</td><td><code>RxDmaDrain()</code></td><td>每复制一个字节前进一格并回绕</td></tr>
+    <tr><td><code>usart6_rx_head</code></td><td>软件队列下一写入位置</td><td><code>RxPush()</code></td><td>成功写入后前进一格</td></tr>
+    <tr><td><code>usart6_rx_tail</code></td><td>软件队列第一条未处理数据的位置</td><td>Read/Drop接口</td><td>消费几个字节就前进几格</td></tr>
+  </tbody></table>
+</section>
+<section>
+  <h2>4. RxDmaDrain：复制DMA新增区间</h2>
+  <div class="code">dma_pos = (256 - NDTR) &amp; 255;
+
+while (usart6_dma_rx_pos != dma_pos) {
+    USART6_LL_RxPush(
+        usart6_dma_rx_buf[usart6_dma_rx_pos]);
+    usart6_dma_rx_pos =
+        (usart6_dma_rx_pos + 1) &amp; 255;
+}</div>
+  <p><code>dma_pos</code>是本次读取NDTR得到的终点，<code>usart6_dma_rx_pos</code>是软件上次处理后的起点。循环复制起点到终点之前的全部字节。</p>
+  <div class="grid">
+    <div class="card"><h3>未回绕示例</h3><p>软件位置7，DMA位置10。</p><p>复制下标7、8、9，软件位置更新为10。</p></div>
+    <div class="card"><h3>回绕示例</h3><p>软件位置254，DMA位置3。</p><p>复制254、255、0、1、2，软件位置更新为3。</p></div>
+  </div>
+</section>
+<section>
+  <h2>5. HT、TC与IDLE的提交时机</h2>
+  <table><thead><tr><th>事件</th><th>触发时机</th><th>处理动作</th><th>作用</th></tr></thead><tbody>
+    <tr><td>HT</td><td>本轮前128字节完成</td><td>清HT并Drain</td><td>及时提交DMA数组前半区</td></tr>
+    <tr><td>TC</td><td>本轮后128字节完成</td><td>清TC并Drain</td><td>提交后半区，配合DMA回绕</td></tr>
+    <tr><td>IDLE</td><td>接收线持续一个字符时间没有新字节</td><td>按SR、DR顺序清标志并Drain</td><td>及时提交不足128字节的短数据</td></tr>
+  </tbody></table>
+  <p>HT和TC按固定容量触发，IDLE按通信间隔触发。三者都调用同一个Drain，因此软件只维护一套“DMA写到哪、软件读到哪”的位置关系。</p>
+</section>
+<section>
+  <h2>6. 两个硬件中断入口</h2>
+  <div class="grid">
+    <div class="card blue"><h3>DMA2_Stream1_IRQHandler</h3><p>调用 <code>USART6_LL_DmaRxIRQHandler()</code>。</p><p>处理HT、TC、TE和DME。</p></div>
+    <div class="card green"><h3>USART6_IRQHandler</h3><p>调用 <code>USART6_LL_IRQHandler()</code>。</p><p>处理IDLE、ORE、FE和NE。</p></div>
+  </div>
+  <p>两个中断优先级均为4，彼此不能抢占，Drain和RxPush按顺序执行。中断中只搬运字节、清标志和恢复硬件，数据包解析与发送由任务完成。</p>
+</section>
+<section>
+  <h2>7. TE、DME与USART错误处理</h2>
+  <table><thead><tr><th>事件</th><th>含义</th><th>当前动作</th></tr></thead><tbody>
+    <tr><td>TE</td><td>DMA Transfer Error</td><td>先Drain已完成数据，再停止并重启Stream</td></tr>
+    <tr><td>DME</td><td>DMA Direct Mode Error</td><td>与TE采用相同恢复流程</td></tr>
+    <tr><td>ORE</td><td>USART Overrun Error</td><td>读取SR、DR清除事件，随后Drain</td></tr>
+    <tr><td>FE</td><td>USART Framing Error</td><td>读取SR、DR清除事件，随后Drain</td></tr>
+    <tr><td>NE</td><td>USART Noise Error</td><td>读取SR、DR清除事件，随后Drain</td></tr>
+  </tbody></table>
+  <p><code>USART6_LL_RxDmaRestart()</code>等待Stream停止，清除状态，重新装入NDTR=256，把软件DMA读取位置置0，再启用Stream。通道、方向和地址配置保持原值。</p>
+</section>
+<section>
+  <h2>8. 轮询发送的完整路径</h2>
+  <div class="path"><div class="node"><strong>任务/函数</strong>提供发送数组</div><div class="arrow">→</div><div class="node"><strong>等待TXE</strong>DR可写</div><div class="arrow">→</div><div class="node"><strong>CPU写DR</strong>逐字节提交</div><div class="arrow">→</div><div class="node"><strong>USART6</strong>产生串行波形</div><div class="arrow">→</div><div class="node"><strong>等待TC</strong>停止位发完</div></div>
+  <p>发送期间CPU执行等待循环。接收DMA仍由硬件独立运行，所以轮询发送与DMA接收可以同时存在。</p>
+  <div class="code">for (index = 0; index &lt; len; index++) {
+    while (!TXE);
+    USART6-&gt;DR = data[index];
+}
+while (!TC);</div>
+</section>
+<section>
+  <h2>9. DMA发送扩展所需模块</h2>
+  <p>DMA发送需要独立的USART6_TX DMA映射和发送状态管理，不能通过现有RX Stream直接获得。完整扩展至少包含：</p>
+  <ol class="steps">
+    <li>根据STM32F407映射表选择USART6_TX对应的DMA Stream和Channel。</li>
+    <li>配置内存到外设方向：内存地址递增，外设地址固定为USART6 DR。</li>
+    <li>维护发送缓冲区的生命周期，DMA完成前保证数据内存保持有效。</li>
+    <li>处理TC、TE等DMA事件，并防止多个任务同时启动一笔发送。</li>
+    <li>区分DMA传输完成与USART线路发送完成；需要时继续等待USART TC。</li>
+  </ol>
+  <div class="callout warn"><strong>当前结论：</strong>USART6已经使用DMA优化接收，发送方向仍保留轮询实现。DMA功能覆盖了一半的数据方向，因此称为“RX DMA版”更准确。</div>
+</section>
+<section>
+  <h2>10. 与数据包解析层的边界</h2>
+  <p>本页结束时，软件队列里只有按顺序保存的原始字节。AA 55包头、LEN、XOR、半包超时与单字节滑动属于协议解析层。</p>
+  <p><a href="../packet/usart6_数据包解析教程.html">进入USART6数据包解析教程</a>，或打开<a href="../packet/usart6_数据包解析动画.html">交互解析动画</a>。</p>
+</section>
+<footer>当前源码：DMA接收 + 软件环形队列 + 轮询发送</footer>
+</main></body></html>

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>USART6 教程 2：无DMA收发</title><link rel="stylesheet" href="usart6_driver.css">
+</head>
+<body>
+<header><div class="wrap">
+  <h1>USART6 教程 2：无DMA收发</h1>
+  <p>接收由RXNE中断读取DR，发送由CPU轮询TXE和TC。该实现对应 <code>usart-elementary-ring</code> 分支。</p>
+  <div class="badges"><span class="badge">RXNE中断接收</span><span class="badge">软件环形队列</span><span class="badge">TXE/TC轮询发送</span><span class="badge">无DMA</span></div>
+</div></header>
+<nav><div class="wrap"><a href="01_usart6_初始化.html">1 初始化</a><a class="current" href="02_usart6_无DMA收发.html">2 无DMA收发</a><a href="03_usart6_DMA初始化.html">3 DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">4 DMA接收</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
+<main>
+<section>
+  <h2>1. 无DMA收发的数据路径</h2>
+  <div class="grid">
+    <div class="card blue"><h3>接收路径</h3><p>PC7 → USART6移位寄存器 → DR → RXNE中断 → CPU读取DR → 软件环形队列。</p></div>
+    <div class="card green"><h3>发送路径</h3><p>CPU等待TXE → CPU写DR → USART6移位发送 → 最后等待TC。</p></div>
+  </div>
+  <p>“无DMA”表示每个接收字节和发送字节都由CPU显式读写USART6的数据寄存器。USART硬件仍负责起始位、数据位、停止位和波特率时序。</p>
+</section>
+<section>
+  <h2>2. RXNE中断接收</h2>
+  <p><code>RXNE</code>是Receive Data Register Not Empty。USART6接收完一个字符并把数据放入DR后，RXNE置1；RXNE中断使CPU进入 <code>USART6_IRQHandler()</code>。</p>
+  <ol class="steps">
+    <li>初始化阶段配置USART6_IRQn优先级并在NVIC中启用该中断。</li>
+    <li>调用 <code>LL_USART_EnableIT_RXNE(USART6)</code>，允许RXNE事件提出中断请求。</li>
+    <li>硬件收到一个字节后置位RXNE，CPU进入中断入口。</li>
+    <li><code>USART6_LL_IRQHandler()</code>读取DR，读取动作同时清除RXNE。</li>
+    <li><code>USART6_LL_RxPush()</code>把字节追加到软件环形队列，任务随后读取。</li>
+  </ol>
+  <div class="code">if (LL_USART_IsActiveFlag_RXNE(USART6) &&
+    LL_USART_IsEnabledIT_RXNE(USART6)) {
+    data = LL_USART_ReceiveData8(USART6);
+    USART6_LL_RxPush(data);
+}</div>
+  <div class="callout"><strong>CPU工作量：</strong>每收到一个字节进入一次USART6中断。115200 8N1约每秒最多传输11520个字符，持续满速接收时也会产生相同数量级的中断。</div>
+</section>
+<section>
+  <h2>3. 软件环形队列</h2>
+  <table><thead><tr><th>变量</th><th>含义</th><th>修改者</th></tr></thead><tbody>
+    <tr><td><code>usart6_rx_buf[]</code></td><td>保存已由CPU从DR取出、尚待任务处理的字节</td><td>中断写入，任务读取</td></tr>
+    <tr><td><code>usart6_rx_head</code></td><td>下一次写入位置</td><td><code>RxPush()</code></td></tr>
+    <tr><td><code>usart6_rx_tail</code></td><td>第一条未消费数据的位置</td><td><code>ReadByte()</code></td></tr>
+    <tr><td><code>next</code></td><td>head前进一步后的候选位置</td><td><code>RxPush()</code>局部变量</td></tr>
+  </tbody></table>
+  <div class="code">next = (head + 1) % BUFFER_SIZE;
+if (next == tail) {
+    队列已满，丢弃当前新字节;
+} else {
+    buf[head] = data;
+    head = next;
+}</div>
+  <p>数组保留一个空位置用于区分空与满：<code>head == tail</code>表示空；<code>next == tail</code>表示满。128格数组最多保存127字节。</p>
+</section>
+<section>
+  <h2>4. TXE与TC轮询发送</h2>
+  <table><thead><tr><th>标志</th><th>置位条件</th><th>发送函数的动作</th></tr></thead><tbody>
+    <tr><td>TXE</td><td>发送数据寄存器可以接收下一个字节</td><td>等待TXE后将一个字节写入DR</td></tr>
+    <tr><td>TC</td><td>DR和移位寄存器都已空，最后一个停止位已经发完</td><td>整组数据写完后等待TC再返回</td></tr>
+  </tbody></table>
+  <div class="code">void USART6_LL_SendByte(uint8_t data) {
+    while (!LL_USART_IsActiveFlag_TXE(USART6));
+    LL_USART_TransmitData8(USART6, data);
+}
+
+for (i = 0; i &lt; len; i++) SendByte(data[i]);
+while (!LL_USART_IsActiveFlag_TC(USART6));</div>
+  <p>轮询期间CPU停留在while循环中。代码简单、时序明确，适合启动打印和短消息；长数据持续发送时会占用较多CPU时间。</p>
+</section>
+<section>
+  <h2>5. ORE事件与处理边界</h2>
+  <p><code>ORE</code>是Overrun Error。DR中的前一个字节仍未被CPU读取时，新字节已经接收完成，硬件置位ORE。读取SR后再读取DR可完成STM32F4规定的清除序列。</p>
+  <p>无DMA方案的接收可靠性依赖中断响应速度。长时间关中断、高优先级中断占用CPU或任务临界区过长，都会增加ORE风险。</p>
+  <div class="callout warn"><strong>代码来源范围：</strong>本页描述 <code>usart-elementary-ring</code> 分支的逐字节接收方式。当前DMA分支已经关闭RXNE逐字节接收，改由DMA读取DR。</div>
+</section>
+<footer>下一页：DMA2 Stream1 Channel5接收初始化</footer>
+</main></body></html>

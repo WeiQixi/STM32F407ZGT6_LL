@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>USART6 教程 1：初始化</title><link rel="stylesheet" href="usart6_driver.css">
+</head>
+<body>
+<header><div class="wrap">
+  <h1>USART6 教程 1：初始化</h1>
+  <p>建立PC6、PC7、USART6和115200 8N1的基础配置。本页只讲串口外设本身，DMA在第三页单独说明。</p>
+  <div class="badges"><span class="badge">STM32F407ZGT6</span><span class="badge">PC6 TX / PC7 RX</span><span class="badge">AF8</span><span class="badge">115200 8N1</span></div>
+</div></header>
+<nav><div class="wrap"><a class="current" href="01_usart6_初始化.html">1 初始化</a><a href="02_usart6_无DMA收发.html">2 无DMA收发</a><a href="03_usart6_DMA初始化.html">3 DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">4 DMA接收</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
+<main>
+<section>
+  <h2>1. 初始化的目标</h2>
+  <div class="path"><div class="node"><strong>GPIOC时钟</strong>允许配置PC6/PC7</div><div class="arrow">→</div><div class="node"><strong>GPIO复用</strong>PC6/PC7连接AF8</div><div class="arrow">→</div><div class="node"><strong>USART6时钟</strong>外设寄存器开始工作</div><div class="arrow">→</div><div class="node"><strong>通信参数</strong>115200 8N1</div><div class="arrow">→</div><div class="node"><strong>Enable</strong>启动收发器</div></div>
+  <div class="callout ok"><strong>初始化的定义：</strong>给硬件提供时钟，建立引脚与外设的连接，写入通信参数，最后启用外设。初始化本身不决定使用轮询、中断还是DMA搬运数据。</div>
+</section>
+<section>
+  <h2>2. 硬件连接与引脚复用</h2>
+  <table><thead><tr><th>项目</th><th>配置</th><th>作用</th></tr></thead><tbody>
+    <tr><td>USART6_TX</td><td>PC6，AF8，推挽输出，无上下拉</td><td>USART6把发送电平输出到PC6</td></tr>
+    <tr><td>USART6_RX</td><td>PC7，AF8，上拉</td><td>USART6从PC7采样；上拉让空闲线保持高电平</td></tr>
+    <tr><td>板载接口</td><td>P13 UART6-TTL</td><td>与USB转TTL模块连接，TX与RX交叉连接并共地</td></tr>
+    <tr><td>GPIO速度</td><td>VERY_HIGH</td><td>控制GPIO输出边沿能力；串口波特率由USART6的BRR设置</td></tr>
+  </tbody></table>
+  <div class="code">LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOC);
+
+GPIO_InitStruct.Mode       = LL_GPIO_MODE_ALTERNATE;
+GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+GPIO_InitStruct.Speed      = LL_GPIO_SPEED_FREQ_VERY_HIGH;
+GPIO_InitStruct.Alternate  = LL_GPIO_AF_8;</div>
+  <p>GPIO的Alternate字段把引脚内部开关连接到USART6。PC6和PC7都使用AF8，但Pull分别配置：TX无上下拉，RX上拉。</p>
+</section>
+<section>
+  <h2>3. USART6时钟、复位与通信参数</h2>
+  <p>USART6挂在APB2总线上。本工程APB2外设时钟PCLK2为84 MHz，LL初始化函数根据PCLK2与目标波特率计算BRR。</p>
+  <ol class="steps">
+    <li>打开USART6的APB2时钟，使寄存器可以访问。</li>
+    <li>执行ForceReset和ReleaseReset，使外设从确定的复位状态开始。</li>
+    <li>选择异步串口模式，随后填写 <code>LL_USART_InitTypeDef</code>。</li>
+    <li>调用 <code>LL_USART_Init()</code> 写入波特率、数据位、停止位和校验配置。</li>
+    <li>附加接收方式所需的中断或DMA配置，最后调用 <code>LL_USART_Enable()</code>。</li>
+  </ol>
+  <table><thead><tr><th>结构体字段</th><th>当前值</th><th>准确含义</th></tr></thead><tbody>
+    <tr><td><code>BaudRate</code></td><td>115200</td><td>每秒传输的符号数</td></tr>
+    <tr><td><code>DataWidth</code></td><td>8B</td><td>每个字符包含8个数据位</td></tr>
+    <tr><td><code>StopBits</code></td><td>1</td><td>每个字符结尾使用1个停止位</td></tr>
+    <tr><td><code>Parity</code></td><td>NONE</td><td>不插入奇偶校验位</td></tr>
+    <tr><td><code>TransferDirection</code></td><td>TX_RX</td><td>同时启用发送器和接收器</td></tr>
+    <tr><td><code>OverSampling</code></td><td>16</td><td>接收采样采用16倍过采样</td></tr>
+  </tbody></table>
+</section>
+<section>
+  <h2>4. 初始化顺序与当前源码</h2>
+  <div class="code">USART6_LL_GPIO_Init();
+打开USART6时钟并复位;
+LL_USART_ConfigAsyncMode(USART6);
+填写并提交 LL_USART_InitTypeDef;
+配置接收方式：RXNE中断 或 DMA接收;
+LL_USART_Enable(USART6);</div>
+  <p>当前分支的 <code>USART6_LL_Init()</code> 在启用USART6之前调用 <code>USART6_LL_RxDmaInit()</code>，随后开启USART6的DMA接收请求。这样外设启用后的第一个接收字节就具备DMA搬运路径。</p>
+  <div class="callout warn"><strong>模块边界：</strong>本页完成USART6的公共基础。第二页在相同初始化基础上讲RXNE接收和轮询发送；第三、四页加入DMA接收。数据包AA 55协议属于更上层，不参与USART寄存器初始化。</div>
+</section>
+<footer>下一页：USART6无DMA接收与轮询发送</footer>
+</main></body></html>

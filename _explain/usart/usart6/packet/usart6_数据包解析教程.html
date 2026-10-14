@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>USART6 DMA 数据包解析教程</title>
+  <style>
+    :root{--bg:#f3f6f8;--paper:#fff;--ink:#17231c;--muted:#607168;--line:#d6e0e5;--blue:#1769aa;--blue-soft:#eaf4fc;--green:#176b4d;--green-soft:#e8f5ef;--amber:#94600f;--amber-soft:#fff4dc;--red:#a33d33;--code:#14211b}
+    *{box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.72 "Segoe UI","Microsoft YaHei",sans-serif}
+    header{padding:46px 20px 38px;color:#f7fbff;background:linear-gradient(135deg,#133f5a,#176b62)}
+    .wrap,main{max-width:1120px;margin:auto} h1{margin:0 0 10px;font-size:clamp(30px,5vw,44px);line-height:1.18} header p{max-width:850px;margin:6px 0;color:#dcedf2}
+    .badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.badge{padding:4px 10px;border:1px solid #ffffff66;border-radius:999px;font-size:13px}
+    nav{position:sticky;top:0;z-index:3;border-bottom:1px solid var(--line);background:#fffffff2;backdrop-filter:blur(8px)}nav .wrap{display:flex;gap:18px;overflow:auto;padding:11px 20px}nav a{color:var(--ink);text-decoration:none;white-space:nowrap;font-size:14px}nav a:hover{color:var(--blue)}
+    main{padding:32px 20px 72px}section{margin-bottom:48px;scroll-margin-top:62px}h2{margin:0 0 16px;padding-bottom:8px;border-bottom:2px solid var(--ink);font-size:23px}h3{margin:23px 0 8px;font-size:18px}p{margin:8px 0}code{font:13px/1.5 Consolas,"Cascadia Mono",monospace}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}.card{padding:17px 19px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}.card h3{margin-top:0}.card.blue{border-top:4px solid var(--blue)}.card.green{border-top:4px solid var(--green)}.card.amber{border-top:4px solid var(--amber)}
+    .callout{margin:14px 0;padding:13px 15px;border-left:4px solid var(--blue);border-radius:0 8px 8px 0;background:var(--blue-soft)}.callout.green{border-color:var(--green);background:var(--green-soft)}.callout.warn{border-color:var(--amber);background:var(--amber-soft)}
+    .code{overflow:auto;margin:12px 0;padding:15px 17px;border-radius:9px;background:var(--code);color:#e8f3ec;white-space:pre;font:13px/1.65 Consolas,"Cascadia Mono",monospace}
+    table{width:100%;border-collapse:collapse;border:1px solid var(--line);background:var(--paper)}th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--muted);font-size:13px}td{font-size:14px}
+    .path{display:flex;align-items:stretch;gap:7px;margin:18px 0;overflow:auto}.node{min-width:142px;padding:13px;border:1px solid var(--line);border-top:4px solid var(--blue);border-radius:9px;background:var(--paper)}.node strong{display:block;color:var(--blue)}.arrow{align-self:center;color:var(--muted);font-size:22px}.protocol{display:grid;grid-template-columns:1fr 1fr 1fr 2fr 1fr;gap:7px;margin:16px 0}.byte{padding:13px 8px;text-align:center;border:1px solid var(--line);border-radius:8px;background:var(--paper)}.byte strong{display:block;color:var(--blue);font:700 18px Consolas,monospace}.byte small{color:var(--muted)}
+    .steps{counter-reset:s;list-style:none;padding:0}.steps li{position:relative;margin:8px 0;padding:11px 13px 11px 47px;border:1px solid var(--line);background:var(--paper)}.steps li:before{counter-increment:s;content:counter(s);position:absolute;left:13px;top:12px;width:23px;height:23px;border-radius:50%;background:var(--blue);color:white;text-align:center;line-height:23px;font-size:12px}
+    .bytes{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.b{min-width:42px;padding:7px 9px;text-align:center;border-radius:6px;background:#e4ebef;font:700 14px Consolas,monospace}.b.good{color:#075f3e;background:#dff2e8}.b.bad{color:#8b2f28;background:#f8dfdc}.b.head{color:#0d5e91;background:#dceffc}.muted{color:var(--muted)}.small{font-size:14px}.tag{display:inline-block;padding:2px 7px;border-radius:999px;background:#e7edf0;font-size:12px}.yes{color:var(--green)}.no{color:var(--red)}
+    .animation{padding:18px;border:1px solid #9ec8e5;border-radius:12px;background:var(--blue-soft)}.animation a.button{display:inline-block;margin:8px 0;padding:10px 15px;border-radius:7px;background:var(--blue);color:white;text-decoration:none;font-weight:650}.animation iframe{width:100%;height:720px;margin-top:14px;border:1px solid var(--line);border-radius:9px;background:#fff}
+    footer{padding-top:22px;text-align:center;color:var(--muted);font-size:13px}
+    @media(max-width:760px){.grid,.grid.three{grid-template-columns:1fr}.protocol{grid-template-columns:repeat(2,1fr)}table{display:block;overflow:auto}.animation iframe{height:620px}}
+  </style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>USART6 DMA 数据包解析教程</h1>
+    <p>依据当前 <code>FreeRTOS_LL_demo</code> 源码重新整理。先弄清每个变量代表什么、由谁修改，再沿着一个字节从硬件到任务完整走一遍。</p>
+    <div class="badges"><span class="badge">STM32F407ZGT6</span><span class="badge">USART6：115200 8N1</span><span class="badge">DMA2 Stream1 Channel5</span><span class="badge">AA 55 | LEN | DATA | XOR</span></div>
+  </div>
+</header>
+<nav><div class="wrap"><a href="../driver/01_usart6_初始化.html">串口初始化</a><a href="../driver/02_usart6_无DMA收发.html">无DMA收发</a><a href="../driver/03_usart6_DMA初始化.html">DMA初始化</a><a href="../driver/04_usart6_DMA接收与轮询发送.html">DMA接收</a><a href="#overview">总路线</a><a href="#layers">三层职责</a><a href="#variables">变量</a><a href="#parser">解析器</a><a href="#examples">逐字节推演</a><a href="#send">发送</a><a href="#irq">中断与错误</a><a href="#test">上板测试</a><a href="#animation">动画</a></div></nav>
+<main>
+<section id="overview">
+  <h2>1. 接收字节的完整处理路径</h2>
+  <div class="path">
+    <div class="node"><strong>PC7 引脚</strong>串口线上的电平</div><div class="arrow">→</div>
+    <div class="node"><strong>USART6-&gt;DR</strong>USART把位还原成字节</div><div class="arrow">→</div>
+    <div class="node"><strong>DMA缓冲区</strong><code>usart6_dma_rx_buf[]</code></div><div class="arrow">→</div>
+    <div class="node"><strong>软件环形队列</strong><code>usart6_rx_buf[]</code></div><div class="arrow">→</div>
+    <div class="node"><strong>协议解析器</strong><code>USART6_Packet_Read()</code></div><div class="arrow">→</div>
+    <div class="node"><strong>FreeRTOS任务</strong>合法包原样回发</div>
+  </div>
+  <div class="callout"><strong>两个接收缓冲区的职责：</strong>DMA缓冲区保存硬件刚搬入的字节；中断中的 <code>USART6_LL_RxDmaDrain()</code> 把新增字节复制到软件环形队列；数据包解析器从软件环形队列读取候选帧。</div>
+  <p>UART硬件输出连续的原始字节流；软件协议层根据包头、LEN和XOR确定每个数据包的边界与有效性。</p>
+</section>
+
+<section id="layers">
+  <h2>2. 三个文件，三个清晰边界</h2>
+  <div class="grid three">
+    <article class="card blue"><h3><code>usart6_ll.c</code></h3><p>负责GPIO、USART6、DMA、中断、两个接收缓冲区以及原始字节接口。</p><p><strong>不知道</strong> AA 55、LEN、XOR。</p></article>
+    <article class="card green"><h3><code>usart6_packet.c</code></h3><p>借助 Count、Peek、Drop 从软件队列检查协议并组包发送。</p><p><strong>不直接配置</strong> USART和DMA。</p></article>
+    <article class="card amber"><h3><code>usart6_app.c</code></h3><p>FreeRTOS任务反复调用 <code>USART6_Packet_Read()</code>；读到合法包后调用 <code>USART6_Packet_Send()</code> 原样回发。</p></article>
+  </div>
+  <p>分层把三个变化原因隔开：换芯片外设主要改LL；换协议主要改Packet；换业务行为主要改App。</p>
+</section>
+
+<section id="variables">
+  <h2>3. 变量的含义、修改者与变化规则</h2>
+  <h3>3.1 底层接收变量</h3>
+  <table>
+    <thead><tr><th>变量</th><th>含义</th><th>谁修改</th><th>如何变化</th></tr></thead>
+    <tbody>
+      <tr><td><code>usart6_dma_rx_buf[256]</code></td><td>DMA硬件循环写入的临时数组</td><td>DMA2硬件</td><td>从下标0写到255，随后回绕到0继续写；数组值一直保留，直到DMA下一轮写入时覆盖</td></tr>
+      <tr><td><code>usart6_dma_rx_pos</code></td><td>软件下一次应从DMA数组读取的下标</td><td><code>RxDmaDrain()</code>；初始化或错误重启时置0</td><td>每复制一个字节就加1，再与255按位与，所以255之后变0</td></tr>
+      <tr><td><code>NDTR</code></td><td>DMA本轮还要搬运多少个字节</td><td>DMA硬件递减；初始化/重启时装入256</td><td>256→255→…→1→0；循环模式随后自动重新装载为256</td></tr>
+      <tr><td><code>dma_pos</code></td><td>由NDTR换算出的“DMA下一次写入下标”快照</td><td><code>RxDmaDrain()</code>每次调用重新计算</td><td><code>(256 - NDTR) &amp; 255</code>，范围0～255</td></tr>
+      <tr><td><code>usart6_rx_buf[256]</code></td><td>供协议层查看和消费的软件环形队列</td><td>中断通过 <code>RxPush()</code> 写入</td><td>写满后回绕；为了区分空和满，始终空出一格，最多存255字节</td></tr>
+      <tr><td><code>usart6_rx_head</code></td><td>软件队列下一次写入位置</td><td><code>RxPush()</code></td><td>成功写入后加1并回绕；队列满时不动</td></tr>
+      <tr><td><code>usart6_rx_tail</code></td><td>软件队列第一个未处理字节的位置</td><td><code>RxDrop()</code>或<code>ReadByte()</code></td><td>消费多少字节就前进多少，再回绕</td></tr>
+    </tbody>
+  </table>
+  <h3>3.2 数据包解析变量</h3>
+  <table>
+    <thead><tr><th>变量</th><th>当前一次调用中的用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>available</code></td><td>软件队列当前尚未处理的字节总数，由 <code>USART6_LL_RxCount()</code> 得到</td></tr>
+      <tr><td><code>data_len</code></td><td>当前候选帧里的LEN字段，只表示DATA长度，合法范围0～64</td></tr>
+      <tr><td><code>frame_len</code></td><td>候选完整帧总长度：2字节包头 + 1字节LEN + DATA + 1字节XOR</td></tr>
+      <tr><td><code>index</code></td><td>复制DATA时的循环下标</td></tr>
+      <tr><td><code>now</code></td><td>检查半包超时时读取的当前毫秒计数</td></tr>
+      <tr><td><code>usart6_packet_wait</code></td><td>是否已经因为当前队头的半包开始等待</td></tr>
+      <tr><td><code>usart6_packet_t0</code></td><td>开始等待当前半包时的毫秒时间</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="dma">
+  <h2>4. DMA循环接收与新增字节定位</h2>
+  <h3>4.1 DMA接收初始化配置</h3>
+  <ol class="steps">
+    <li>打开DMA2时钟，停止Stream1，并等待硬件确认EN清零。</li>
+    <li>选择固定映射 <strong>DMA2 Stream1 Channel5</strong>，方向设为外设到内存。</li>
+    <li>外设地址固定为 <code>USART6-&gt;DR</code>；内存地址从 <code>usart6_dma_rx_buf[0]</code> 开始并自动递增。</li>
+    <li>两端数据宽度均为BYTE；使用循环模式；关闭FIFO，采用直接模式。</li>
+    <li>给NDTR装入256，开启HT、TC、TE、DME中断，最后启动Stream。</li>
+  </ol>
+  <h3>4.2 NDTR：当前一轮的剩余传输次数</h3>
+  <p><code>NDTR</code>由DMA硬件维护，表示<strong>当前这一轮还要完成多少次传输</strong>。本工程一次传输一个字节，所以NDTR从256开始，每搬入一个字节减1；减到0后，循环模式将它重新装载为256。NDTR描述DMA传输进度，与数组单元中保留的新旧数值无关。</p>
+  <div class="grid">
+    <div class="card"><h3>刚启动</h3><p><code>NDTR = 256</code></p><p><code>dma_pos = (256 - 256) &amp; 255 = 0</code></p><p>意思是这一轮尚未搬运，DMA下一次写 <code>usart6_dma_rx_buf[0]</code>。</p></div>
+    <div class="card"><h3>收到3字节</h3><p><code>NDTR = 253</code></p><p><code>dma_pos = 3</code></p><p>下标0、1、2已被DMA写入；DMA下一次写下标3。</p></div>
+  </div>
+  <h3>4.3 <code>RxDmaDrain()</code>的两个位置</h3>
+  <div class="code">dma_pos = (256 - NDTR) &amp; 255;
+
+while (usart6_dma_rx_pos != dma_pos) {
+    把 dma数组[usart6_dma_rx_pos] 追加到软件队列;
+    usart6_dma_rx_pos = (usart6_dma_rx_pos + 1) &amp; 255;
+}</div>
+  <p><code>dma_pos</code>是本次查看硬件得到的终点；<code>usart6_dma_rx_pos</code>是软件上次已经复制到哪里。两者之间的区间就是“DMA已写、软件尚未复制”的新增字节。</p>
+  <div class="callout green"><strong>例：</strong>软件上次已处理到下标7，所以 <code>usart6_dma_rx_pos=7</code>；后来DMA又写到下标10，所以 <code>dma_pos=10</code>。循环复制下标7、8、9，完成后软件位置变为10。下标0～6中的值已经处理过，软件读位置保证下一次从下标10继续。</div>
+  <h3>4.4 DMA回绕时的读取顺序</h3>
+  <p>假设软件位置为254，DMA写完下标254、255后回到0，又写了0、1、2，此时 <code>dma_pos=3</code>。循环依次读取254、255、0、1、2；每次执行 <code>(位置 + 1) &amp; 255</code>，255的下一个位置自然变为0，最后追到3停止。</p>
+  <p>位置关系按照环形前进方向判断。回绕前，软件位置通常小于或等于DMA位置；回绕后，软件位置的数值可以大于DMA位置，循环仍从软件位置开始，经过255和0，最后追到DMA位置。</p>
+  <h3>4.5 HT、TC、IDLE的触发时机与作用</h3>
+  <table>
+    <thead><tr><th>事件</th><th>触发时机</th><th>Drain的作用</th></tr></thead>
+    <tbody>
+      <tr><td>HT（半传输）</td><td>DMA本轮写完前128字节</td><td>及时把前半区复制走，避免等满256字节才处理</td></tr>
+      <tr><td>TC（传输完成）</td><td>DMA本轮写完后128字节并准备回绕</td><td>提交后半区；循环模式随后从数组0继续写</td></tr>
+      <tr><td>IDLE（线路空闲）</td><td>接收完最后一个字节后，持续约一个字符时间没有新字节</td><td>短包可能永远到不了128字节，IDLE负责及时提交这些新增字节</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="queue">
+  <h2>5. 软件环形队列的查看与消费接口</h2>
+  <p>DMA区域会被硬件不断覆盖，不适合让较慢的任务直接保留一个候选帧。中断先把新增字节放进软件队列，任务可以按自己的速度检查。</p>
+  <h3>5.1 head和tail的推进规则</h3>
+  <div class="code">next = (head + 1) &amp; 255;
+if (next == tail) 队列已满，丢弃这个新字节;
+否则：
+    usart6_rx_buf[head] = 新字节;
+    head = next;
+
+消费 n 字节时：
+    tail = (tail + n) &amp; 255;</div>
+  <p><code>&amp; 255</code>叫“与上掩码”。256是2的幂，下标的低8位正好表示0～255。256的二进制最低9位为 <code>1 0000 0000</code>，与 <code>255（0 1111 1111）</code> 按位与后变成0，效果等同于对256取模。</p>
+  <h3>5.2 Count、Peek、Drop与ReadByte的职责</h3>
+  <div class="grid three">
+    <article class="card blue"><h3><code>RxCount()</code></h3><p>先问“现在有几个字节”，避免越界查看，也能判断完整帧是否到齐。</p></article>
+    <article class="card green"><h3><code>RxPeek(offset)</code></h3><p>查看指定偏移处的字节并保持tail不变，使解析器能够先验证包头、LEN和XOR。</p></article>
+    <article class="card amber"><h3><code>RxDrop(n)</code></h3><p>确认应消费或应丢弃后，再一次移动tail。合法帧丢整帧；错误候选只滑动1字节。</p></article>
+  </div>
+  <p><code>USART6_LL_ReadByte()</code>执行“读取一个字节并立即推进tail”，适合逐字节业务。它与数据包解析器共用同一个tail，因此本工程选择由数据包解析器统一消费队列。</p>
+  <div class="callout warn"><strong>两个Drop的职责：</strong><code>USART6_LL_RxDrop()</code>负责移动底层tail；<code>USART6_Packet_Drop()</code>在调用底层Drop后，同时清除与原队头绑定的半包等待状态。协议层使用 <code>USART6_Packet_Drop()</code>。</div>
+</section>
+
+<section id="parser">
+  <h2>6. 协议格式和 <code>USART6_Packet_Read()</code> 完整流程</h2>
+  <div class="protocol">
+    <div class="byte"><strong>AA</strong><small>包头0</small></div><div class="byte"><strong>55</strong><small>包头1</small></div><div class="byte"><strong>LEN</strong><small>DATA字节数</small></div><div class="byte"><strong>DATA…</strong><small>0～64字节</small></div><div class="byte"><strong>XOR</strong><small>LEN ^ DATA…</small></div>
+  </div>
+  <p>XOR不包含AA和55。空DATA帧也合法：LEN为0，XOR也为0，总帧长4字节。</p>
+  <h3>6.1 每次调用Read时按这个顺序检查</h3>
+  <ol class="steps">
+    <li>参数 <code>payload</code> 或 <code>len</code> 为空，无法交付结果，直接返回0。</li>
+    <li>读取 <code>available</code>。不足2字节时连完整包头都无法判断，保留已有字节并返回0。</li>
+    <li>队头值≠AA：当前字节无法构成协议包头，丢1字节并在本次调用中继续检查。</li>
+    <li>第一个字节为AA、第二个字节≠55：只丢第一个AA，因为第二个字节本身可能是下一帧的AA。</li>
+    <li>AA 55正确但LEN还没到：保留当前候选并返回0。</li>
+    <li>读出 <code>data_len</code>。若大于64，当前候选帧判定无效，只滑动1字节后重新找包头。</li>
+    <li>计算 <code>frame_len = 3 + data_len + 1</code>。字节尚未到齐时进入半包等待。</li>
+    <li>首次遇到这个半包时记录 <code>usart6_packet_t0</code>；后续调用若等待达到20ms，滑动1字节，避免错误LEN让队列永久堵住。</li>
+    <li>完整帧到齐后，用 <code>USART6_Packet_CalcXor()</code> 计算LEN与全部DATA的异或值，并与帧尾比较。</li>
+    <li>XOR不一致，只滑动1字节继续重新同步；一致则复制DATA、写回长度、Drop整个帧并返回1。</li>
+  </ol>
+  <div class="callout"><strong>一次调用中的连续扫描：</strong><code>for(;;)</code>配合<code>continue</code>，在一次Read调用里反复丢弃明确无效的队头字节或候选帧起点，直到找到一帧，或者现有字节不足而返回等待。协议层使用“无效字节”这个名称；USART硬件的NE表示线路采样噪声错误。</div>
+</section>
+
+<section id="examples">
+  <h2>7. 用真实字节推演解析过程</h2>
+  <h3>7.1 正常帧</h3>
+  <div class="bytes"><span class="b head">AA</span><span class="b head">55</span><span class="b good">02</span><span class="b good">48</span><span class="b good">69</span><span class="b good">23</span></div>
+  <p><code>frame_len = 3 + 2 + 1 = 6</code>。计算 <code>02 ^ 48 ^ 69 = 23</code>，与帧尾一致。DATA <code>48 69</code> 被复制给任务，然后tail前进6格。</p>
+  <h3>7.2 前面有无效字节和重复AA</h3>
+  <div class="bytes"><span class="b bad">00</span><span class="b head">AA</span><span class="b head">AA</span><span class="b bad">88</span><span class="b head">AA</span><span class="b head">55</span><span class="b good">…</span></div>
+  <ol>
+    <li>队头00≠AA，Drop 1，tail指向第一个AA。</li>
+    <li>第一个AA后的字节为AA，与55不相等，只丢前一个AA；后一个AA保留为新的候选。</li>
+    <li>新的AA后面是88，仍只丢这个AA。</li>
+    <li>88≠AA，Drop 1。</li>
+    <li>现在队头是AA 55，开始检查LEN、完整性和XOR。</li>
+  </ol>
+  <h3>7.3 非法LEN后的单字节滑动</h3>
+  <p>非法LEN只能证明“以当前第一个AA为起点”的候选帧无效。后面的55、LEN字段或DATA位置仍可能包含下一帧的AA。解析器因此从当前候选起点向前滑动1字节，再重新扫描，使每个可能的包头位置都有机会被检查。</p>
+  <h3>7.4 半包和粘包</h3>
+  <div class="grid">
+    <article class="card"><h3>半包</h3><p>队列里只有 <code>AA 55 02 48</code>，完整帧应有6字节。解析器不移动tail，返回0。以后任务再次调用时继续检查；达到20ms仍不完整才滑动1字节。</p></article>
+    <article class="card"><h3>粘包</h3><p>两个完整帧连续进入队列。第一次Read只Drop第一帧并返回1；第二帧仍在tail之后，下次任务循环再取出。</p></article>
+  </div>
+</section>
+
+<section id="send">
+  <h2>8. <code>USART6_Packet_Send()</code> 的组帧流程</h2>
+  <p>发送函数先在局部数组 <code>frame[68]</code> 中构造完整协议帧，再把整帧交给底层发送。68来自2字节包头 + 1字节LEN + 最多64字节DATA + 1字节XOR。</p>
+  <ol class="steps">
+    <li>检查参数：DATA长度为0～64；长度大于0时payload需要指向有效数据区。</li>
+    <li><code>frame_pos</code>从0开始，依次写入AA、55、LEN；每写一个字节就自增，始终指向下一个可写位置。</li>
+    <li><code>value</code>以LEN为初值；复制每个DATA到frame时，同时执行 <code>value ^= payload[index]</code>。</li>
+    <li>把最终XOR写在帧尾，然后调用 <code>USART6_LL_Send(frame, frame_pos)</code>。</li>
+    <li>底层采用TXE/TC轮询发送：等待TXE后逐字节写DR，最后等待TC确保停止位发送完成。当前发送路径未使用DMA。</li>
+  </ol>
+</section>
+
+<section id="irq">
+  <h2>9. 中断处理、错误含义和当前边界</h2>
+  <h3>9.1 两个硬件中断入口的职责</h3>
+  <table>
+    <thead><tr><th>入口</th><th>检查的事件</th><th>处理动作</th></tr></thead>
+    <tbody>
+      <tr><td><code>DMA2_Stream1_IRQHandler()</code></td><td>HT、TC、TE、DME</td><td>转到 <code>USART6_LL_DmaRxIRQHandler()</code>。HT/TC清标志后Drain；TE/DME先尽量Drain已完成数据，再重启DMA。</td></tr>
+      <tr><td><code>USART6_IRQHandler()</code></td><td>IDLE、ORE、FE、NE</td><td>转到 <code>USART6_LL_IRQHandler()</code>。按STM32F4要求先读SR再读DR清标志，然后Drain。</td></tr>
+    </tbody>
+  </table>
+  <h3>9.2 DMA与USART错误事件的含义</h3>
+  <div class="grid">
+    <div class="card"><p><strong>TE</strong>：DMA Transfer Error，DMA传输错误。</p><p><strong>DME</strong>：DMA Direct Mode Error，DMA关闭FIFO、使用直接模式时的错误。</p><p><strong>FE</strong>（DMA）：FIFO Error。本工程关闭FIFO，但初始化和中断中仍清除可能残留的标志。</p></div>
+    <div class="card"><p><strong>ORE</strong>：USART Overrun Error，前一个字节未及时转走，新字节又到达。</p><p><strong>FE</strong>（USART）：Framing Error，停止位等帧格式异常。</p><p><strong>NE</strong>：USART Noise Error，硬件采样检测到线路噪声。协议层的“无效字节”表示字节值不符合数据包格式，两者分别属于硬件层和协议层。</p></div>
+  </div>
+  <p><strong>当前实现的可观察信息：</strong>中断负责清标志、保存可用数据和恢复接收。代码未保存错误次数、发生时间和事件日志，因此运行结束后没有可供查询的历史错误记录。ISR的工作范围也不包含数据包解析、发送、printf和FreeRTOS API调用。</p>
+  <h3>9.3 IDLE读DR与DMA的竞态边界</h3>
+  <p>STM32F4清IDLE/ORE/FE/NE要求顺序读取SR和DR。与此同时RX接收由DMA负责，读取DR的动作与DMA请求可能靠得很近。当前实现先读SR、再读DR清标志，然后依据NDTR执行Drain，这是当前代码采用的处理顺序。</p>
+  <div class="callout warn">当前实现采用一次NDTR快照，适合当前实验和教学。持续满线速、高可靠场景可进一步加入短暂关闭DMA、稳定读取NDTR两次等竞态处理，并结合芯片参考手册、总线时序和压力测试完成验证。</div>
+</section>
+
+<section id="app">
+  <h2>10. FreeRTOS任务的消费过程与队列满处理</h2>
+  <p><code>USART6_AppTask()</code>负责消费合法数据包。每轮调用Read：成功就回发；失败就延时1个tick，避免空转占满CPU。</p>
+  <div class="code">for (;;) {
+    if (USART6_Packet_Read(payload, &amp;length)) {
+        USART6_Packet_Send(payload, length);
+    } else {
+        vTaskDelay(1U);
+    }
+}</div>
+  <p>任务通过Read推进tail并释放软件队列空间。任务停止调用Read时，DMA和中断仍继续接收，head继续前进而tail保持原位；队列达到255字节后，<code>RxPush()</code>丢弃后来到的新字节。完整的数据处理链必须同时包含硬件接收和任务消费。</p>
+  <p>这里的软件队列是单生产者/单消费者结构：生产动作只在USART6相关中断上下文中发生，消费动作只在这个任务中发生。若未来增加第二个任务也读取tail，或多个执行上下文同时写head，就不再满足该前提，需要锁、临界区或改用FreeRTOS队列/StreamBuffer。</p>
+</section>
+
+<section id="test">
+  <h2>11. 上板测试</h2>
+  <ul>
+    <li>硬件：PC6=USART6_TX，PC7=USART6_RX，AF8，连接P13 UART6-TTL。</li>
+    <li>串口：115200，8数据位，无校验，1停止位。</li>
+    <li>发送区和接收区都切换为HEX；程序回显的是符合协议格式的完整数据包。</li>
+  </ul>
+  <h3>短包</h3>
+  <div class="code">发送：AA 55 02 48 69 23
+期望：AA 55 02 48 69 23</div>
+  <h3>字符串 <code>http://www.cmsoft.cn</code> 的完整协议帧</h3>
+  <div class="code">AA 55 14 68 74 74 70 3A 2F 2F 77 77 77 2E 63 6D 73 6F 66 74 2E 63 6E 4C</div>
+  <p>字符串测试需要先补齐AA 55、LEN和XOR，再以HEX帧发送。USB模块仍保持软断开，不连接主机枚举。</p>
+</section>
+
+<section id="animation">
+  <h2>12. 把字节、函数和tail变化连起来看</h2>
+  <div class="animation">
+    <p>动画使用示例 <code>AA 55 AA 55 02 48 69 23</code>，可以播放、暂停、单步和复位，重点观察每次Peek检查什么、何时Drop以及tail如何变化。</p>
+    <a class="button" href="usart6_数据包解析动画.html" target="_blank" rel="noopener">在新窗口打开解析动画</a>
+    <iframe src="usart6_数据包解析动画.html" title="USART6数据包解析动画"></iframe>
+  </div>
+</section>
+
+<section id="summary">
+  <h2>13. 不背代码，记住约束</h2>
+  <ol>
+    <li>DMA负责持续搬运；<code>dma_pos</code>记录硬件写入终点，<code>usart6_dma_rx_pos</code>记录软件下一读取位置。</li>
+    <li>DMA区域会回绕覆盖，所以中断要通过HT、TC、IDLE及时Drain到软件队列。</li>
+    <li>协议判断可能失败，所以必须先Peek验证，最后才Drop消费。</li>
+    <li>无效候选采用单字节滑动，使后续每个字节都有机会成为新包头。</li>
+    <li>半包记录等待起点并设置20ms超时，使错误候选能够被释放。</li>
+    <li>ISR负责字节搬运和硬件恢复；任务负责解析、发送与业务行为。</li>
+  </ol>
+  <div class="callout green">记忆主线是“问题 → 约束 → 接口”：硬件连续流需要分帧；Peek在保持tail不变的情况下完成验证；Drop在验证后推进tail；缓冲区回绕要求所有位置按环形规则推进。函数名和局部变量可随时查源码，重点是理解每个接口解决的约束。</div>
+</section>
+<footer>与当前 FreeRTOS_LL_demo 的 USART6 DMA + 软件队列 + 数据包解析实现对应</footer>
+</main>
+</body>
+</html>
