@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>USART6 数据包解析动画</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #181818;
+      --panel: #222222;
+      --panel-2: #2a2a2a;
+      --line: #444444;
+      --text: #eeeeee;
+      --muted: #aaaaaa;
+      --accent: #4da3ff;
+      --accent-bg: #173b5f;
+      --success: #64c987;
+      --warning: #e8b15b;
+      --code: #151515;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 48px;
+    }
+
+    h1, h2, p { margin-top: 0; }
+    h1 { margin-bottom: 6px; font-size: 26px; }
+    h2 { margin-bottom: 12px; font-size: 18px; }
+
+    .subtitle {
+      color: var(--muted);
+      margin-bottom: 20px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 22px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 7px 14px;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #0b1722;
+      font-weight: 700;
+    }
+
+    button:disabled {
+      opacity: .42;
+      cursor: not-allowed;
+    }
+
+    .step-counter {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .queue-section {
+      margin-bottom: 24px;
+    }
+
+    .queue {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(64px, 1fr));
+      gap: 9px;
+    }
+
+    .byte-wrap {
+      min-width: 0;
+      text-align: center;
+    }
+
+    .byte {
+      padding: 14px 6px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      font: 700 19px Consolas, monospace;
+      transition: background .25s, border-color .25s, opacity .25s, transform .25s;
+    }
+
+    .byte.inspect {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+      transform: translateY(-3px);
+    }
+
+    .byte.consumed {
+      opacity: .35;
+    }
+
+    .byte-index {
+      min-height: 45px;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .tail-label {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr);
+      gap: 16px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 13px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .panel-body {
+      padding: 15px;
+    }
+
+    .label {
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .function-call {
+      margin-bottom: 15px;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--code);
+      color: var(--accent);
+      font-family: Consolas, monospace;
+      overflow-wrap: anywhere;
+    }
+
+    .result {
+      margin-bottom: 15px;
+      color: var(--success);
+      font-weight: 700;
+    }
+
+    .reason {
+      margin-bottom: 0;
+    }
+
+    .code {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      overflow: hidden;
+      font: 13px/1.5 Consolas, monospace;
+    }
+
+    .code-line {
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr);
+      gap: 8px;
+      padding: 7px 9px;
+      border-bottom: 1px solid #333333;
+      color: var(--muted);
+      transition: background .25s, color .25s;
+    }
+
+    .code-line:last-child { border-bottom: 0; }
+    .code-line.active {
+      background: var(--accent-bg);
+      color: var(--text);
+    }
+    .line-number { color: #777777; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .legend-mark {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      margin-right: 6px;
+      border: 1px solid var(--line);
+      vertical-align: -2px;
+    }
+
+    .legend-mark.inspect {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+    }
+
+    .legend-mark.consumed {
+      background: var(--panel-2);
+      opacity: .35;
+    }
+
+    .flow {
+      margin-top: 24px;
+      padding: 14px 16px;
+      border-left: 3px solid var(--warning);
+      background: var(--panel);
+    }
+
+    .flow code {
+      color: var(--warning);
+      font-family: Consolas, monospace;
+    }
+
+    @media (max-width: 820px) {
+      .queue {
+        grid-template-columns: repeat(4, minmax(60px, 1fr));
+      }
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .step-counter {
+        width: 100%;
+        margin-left: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>USART6 数据包解析动画</h1>
+    <p class="subtitle">
+      示例字节：AA 55 AA 55 02 48 69 23。动画同步显示字节、tail、函数调用和判断逻辑。
+    </p>
+
+    <div class="toolbar">
+      <button id="playButton" class="primary">播放</button>
+      <button id="previousButton">上一步</button>
+      <button id="nextButton">下一步</button>
+      <button id="resetButton">复位</button>
+      <span id="stepCounter" class="step-counter"></span>
+    </div>
+
+    <section class="queue-section">
+      <h2>软件接收队列</h2>
+      <div id="queue" class="queue"></div>
+    </section>
+
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-header">
+          <span id="stepTitle"></span>
+          <span id="tailValue"></span>
+        </div>
+        <div class="panel-body">
+          <div class="label">当前函数调用</div>
+          <div id="functionCall" class="function-call"></div>
+
+          <div class="label">执行结果</div>
+          <div id="result" class="result"></div>
+
+          <div class="label">为什么</div>
+          <p id="reason" class="reason"></p>
+        </div>
+      </section>
+
+      <section>
+        <h2>解析逻辑</h2>
+        <div id="code" class="code"></div>
+      </section>
+    </div>
+
+    <div class="legend">
+      <span><i class="legend-mark inspect"></i>本步骤正在Peek或校验</span>
+      <span><i class="legend-mark consumed"></i>位于tail之前，数组内容仍在但逻辑失效</span>
+    </div>
+
+    <div class="flow">
+      函数关系：
+      <code>USART6_Packet_Read()</code>
+      调用
+      <code>USART6_LL_RxCount()</code>、
+      <code>USART6_LL_RxPeek()</code>和
+      <code>USART6_Packet_Drop()</code>；
+      Drop内部再调用
+      <code>USART6_LL_RxDrop()</code>移动tail。
+    </div>
+  </main>
+
+  <script>
+    "use strict";
+
+    const bytes = ["AA", "55", "AA", "55", "02", "48", "69", "23"];
+
+    const codeLines = [
+      "available = USART6_LL_RxCount();",
+      "if (RxPeek(0) != AA) Drop(1);",
+      "if (RxPeek(1) != 55) Drop(1);",
+      "data_len = RxPeek(2);",
+      "if (data_len > 64) Drop(1);",
+      "if (available < frame_len) 等待;",
+      "if (本地XOR != 帧尾XOR) Drop(1);",
+      "复制DATA；Drop(frame_len)；return 1;"
+    ];
+
+    const steps = [
+      {
+        title: "取得可用字节数",
+        tail: 0,
+        inspect: [],
+        call: "USART6_LL_RxCount()",
+        result: "available = 8",
+        reason: "队列里有8个未处理字节，足够开始检查包头。",
+        codeLine: 0
+      },
+      {
+        title: "检查第一个包头字节",
+        tail: 0,
+        inspect: [0],
+        call: "USART6_LL_RxPeek(0)",
+        result: "读取绝对下标0：AA，匹配SOF0",
+        reason: "Peek只查看，不移动tail；当前候选起点仍是下标0。",
+        codeLine: 1
+      },
+      {
+        title: "检查第二个包头字节",
+        tail: 0,
+        inspect: [1],
+        call: "USART6_LL_RxPeek(1)",
+        result: "读取绝对下标1：55，匹配SOF1",
+        reason: "当前候选包头AA 55正确，继续读取LEN。",
+        codeLine: 2
+      },
+      {
+        title: "读取候选帧LEN",
+        tail: 0,
+        inspect: [2],
+        call: "USART6_LL_RxPeek(USART6_PKT_SOF_LEN)",
+        result: "读取绝对下标2：AA = 170，超过64",
+        reason: "下标0开始的候选帧不合法；下标2的AA仍可能是下一帧起点。",
+        codeLine: 3
+      },
+      {
+        title: "滑动一个字节",
+        tail: 1,
+        inspect: [],
+        call: "USART6_Packet_Drop(1U)",
+        result: "tail：0 → 1",
+        reason: "只否定下标0这个起点；数组不清零，tail之前的数据逻辑失效。",
+        codeLine: 4
+      },
+      {
+        title: "从新队头检查SOF0",
+        tail: 1,
+        inspect: [1],
+        call: "USART6_LL_RxPeek(0)",
+        result: "读取绝对下标1：55，不是AA",
+        reason: "Peek(0)使用相对tail的偏移；tail为1时，它查看绝对下标1。",
+        codeLine: 1
+      },
+      {
+        title: "再次滑动一个字节",
+        tail: 2,
+        inspect: [],
+        call: "USART6_Packet_Drop(1U)",
+        result: "tail：1 → 2",
+        reason: "下标1的55不能作为SOF0，新的候选起点变成下标2。",
+        codeLine: 4
+      },
+      {
+        title: "找到新的SOF0",
+        tail: 2,
+        inspect: [2],
+        call: "USART6_LL_RxPeek(0)",
+        result: "读取绝对下标2：AA，匹配SOF0",
+        reason: "前两个字节仍留在数组中，但已经位于tail之前，不再参与解析。",
+        codeLine: 1
+      },
+      {
+        title: "找到新的SOF1",
+        tail: 2,
+        inspect: [3],
+        call: "USART6_LL_RxPeek(1)",
+        result: "读取绝对下标3：55，匹配SOF1",
+        reason: "新的候选包头位于绝对下标2和3。",
+        codeLine: 2
+      },
+      {
+        title: "读取合法LEN",
+        tail: 2,
+        inspect: [4],
+        call: "USART6_LL_RxPeek(2)",
+        result: "读取绝对下标4：02，DATA长度为2",
+        reason: "完整帧需要2字节包头、1字节LEN、2字节DATA和1字节XOR，共6字节。",
+        codeLine: 3
+      },
+      {
+        title: "检查完整性",
+        tail: 2,
+        inspect: [2, 3, 4, 5, 6, 7],
+        call: "USART6_LL_RxCount()",
+        result: "available = 6，frame_len = 6",
+        reason: "从tail=2开始正好还有6字节，候选帧已经完整到达。",
+        codeLine: 5
+      },
+      {
+        title: "检查XOR",
+        tail: 2,
+        inspect: [4, 5, 6, 7],
+        call: "USART6_Packet_CalcXor(2, 3)",
+        result: "02 ^ 48 ^ 69 = 23，与帧尾23一致",
+        reason: "LEN和DATA参与XOR，包头AA 55不参与。",
+        codeLine: 6
+      },
+      {
+        title: "返回DATA并消费整帧",
+        tail: 8,
+        inspect: [],
+        call: "USART6_Packet_Drop(frame_len)",
+        result: "payload = 48 69；tail：2 → 8",
+        reason: "全部检查通过后才复制DATA并消费6字节；本次解析成功返回1。",
+        codeLine: 7
+      }
+    ];
+
+    let stepIndex = 0;
+    let timer = null;
+
+    const queueElement = document.getElementById("queue");
+    const codeElement = document.getElementById("code");
+    const playButton = document.getElementById("playButton");
+    const previousButton = document.getElementById("previousButton");
+    const nextButton = document.getElementById("nextButton");
+    const resetButton = document.getElementById("resetButton");
+
+    function renderQueue(step) {
+      queueElement.innerHTML = "";
+
+      bytes.forEach((byte, index) => {
+        const wrap = document.createElement("div");
+        wrap.className = "byte-wrap";
+
+        const byteElement = document.createElement("div");
+        byteElement.className = "byte";
+        if (index < step.tail) byteElement.classList.add("consumed");
+        if (step.inspect.includes(index)) byteElement.classList.add("inspect");
+        byteElement.textContent = byte;
+
+        const indexElement = document.createElement("div");
+        indexElement.className = "byte-index";
+        indexElement.innerHTML = `下标 ${index}<br>`;
+
+        if (index === step.tail && step.tail < bytes.length) {
+          const tail = document.createElement("span");
+          tail.className = "tail-label";
+          tail.textContent = "tail";
+          indexElement.appendChild(tail);
+        } else if (index < step.tail) {
+          indexElement.append("已丢弃/消费");
+        }
+
+        wrap.append(byteElement, indexElement);
+        queueElement.appendChild(wrap);
+      });
+    }
+
+    function renderCode(step) {
+      codeElement.innerHTML = "";
+
+      codeLines.forEach((line, index) => {
+        const row = document.createElement("div");
+        row.className = "code-line";
+        if (index === step.codeLine) row.classList.add("active");
+
+        const number = document.createElement("span");
+        number.className = "line-number";
+        number.textContent = String(index + 1);
+
+        const content = document.createElement("span");
+        content.textContent = line;
+
+        row.append(number, content);
+        codeElement.appendChild(row);
+      });
+    }
+
+    function render() {
+      const step = steps[stepIndex];
+      document.getElementById("stepCounter").textContent =
+        `步骤 ${stepIndex + 1} / ${steps.length}`;
+      document.getElementById("stepTitle").textContent = step.title;
+      document.getElementById("tailValue").textContent = `tail = ${step.tail}`;
+      document.getElementById("functionCall").textContent = step.call;
+      document.getElementById("result").textContent = step.result;
+      document.getElementById("reason").textContent = step.reason;
+
+      previousButton.disabled = stepIndex === 0;
+      nextButton.disabled = stepIndex === steps.length - 1;
+      renderQueue(step);
+      renderCode(step);
+    }
+
+    function stop() {
+      if (timer !== null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+      playButton.textContent = "播放";
+    }
+
+    function play() {
+      if (timer !== null) {
+        stop();
+        return;
+      }
+
+      if (stepIndex === steps.length - 1) stepIndex = 0;
+      playButton.textContent = "暂停";
+      render();
+
+      timer = window.setInterval(() => {
+        if (stepIndex >= steps.length - 1) {
+          stop();
+          return;
+        }
+        stepIndex += 1;
+        render();
+      }, 1200);
+    }
+
+    playButton.addEventListener("click", play);
+    previousButton.addEventListener("click", () => {
+      stop();
+      stepIndex = Math.max(0, stepIndex - 1);
+      render();
+    });
+    nextButton.addEventListener("click", () => {
+      stop();
+      stepIndex = Math.min(steps.length - 1, stepIndex + 1);
+      render();
+    });
+    resetButton.addEventListener("click", () => {
+      stop();
+      stepIndex = 0;
+      render();
+    });
+
+    render();
+  </script>
+</body>
+</html>

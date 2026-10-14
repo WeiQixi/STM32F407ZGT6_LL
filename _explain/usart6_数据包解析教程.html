@@ -142,6 +142,7 @@
       <a href="#protocol">协议设计</a>
       <a href="#parser">解析器</a>
       <a href="#walkthrough">字节推演</a>
+      <a href="#notes">问答笔记</a>
       <a href="#rtos">中断与任务</a>
       <a href="#test">测试</a>
       <a href="#mistakes">易错点</a>
@@ -158,7 +159,7 @@
         <div class="card"><h3>写出解析器</h3><p>处理半包、粘包、重复包头、噪声和错误校验。</p></div>
         <div class="card"><h3>验证异常路径</h3><p>不仅测试正常包，也主动发送错误包观察重新同步。</p></div>
       </div>
-      <p class="callout">对应源码：<code>FreeRTOS_LL_demo/Hardware/usart/usart6_ll.c</code>。硬件为 P13 UART6-TTL，115200 8N1。</p>
+      <p class="callout">对应源码：<code>usart6_ll.c</code>（硬件/DMA/字节队列）、<code>usart6_packet.c</code>（协议解析）、<code>usart6_app.c</code>（任务）。硬件为 P13 UART6-TTL，115200 8N1。</p>
     </section>
 
     <section id="stream">
@@ -192,7 +193,7 @@
     <section id="architecture">
       <h2>第二章：先分层，再开始写函数</h2>
       <div class="pipeline" aria-label="USART 数据包接收架构">
-        <div class="stage"><strong>1. USART ISR</strong>读取 DR，处理 ORE。<small>越短越好</small></div>
+        <div class="stage"><strong>1. USART/DMA ISR</strong>DMA搬运字节，IDLE/HT/TC触发提交。<small>ISR不解包</small></div>
         <div class="stage"><strong>2. 环形队列</strong>保存尚未解析的原始字节。<small>解耦中断与任务</small></div>
         <div class="stage"><strong>3. ReadPacket</strong>找包头、读长度、等待半包、校验。<small>一次最多返回一帧</small></div>
         <div class="stage"><strong>4. PktTask</strong>处理纯 DATA，当前测试为原样回发。<small>业务不进入 ISR</small></div>
@@ -346,12 +347,139 @@ XOR  = 02 ^ 48 ^ 69 = 23
       <div class="lesson"><strong>粘包不是错误：</strong>它只是队列里同时存在多帧。协议有 LEN，解析器逐帧消费即可。</div>
     </section>
 
+    <section id="notes">
+      <h2>第七章：关键函数问答笔记</h2>
+
+      <h3>问题一：RxDrop 怎么“丢掉”字节？</h3>
+      <p><code>RxDrop</code> 不会把数组内容清零，而是把 <code>tail</code> 向前移动。被越过的字节不再属于未读范围，因此在逻辑上已经被丢弃，原数组位置以后可以被 ISR 覆盖。</p>
+      <div class="code">丢弃前：
+下标： 10  11  12  13  14
+数据： 11  22  AA  55  02
+       ↑
+     tail=10
+
+RxDrop(2)：
+tail = (10 + 2) &amp; 255 = 12
+
+丢弃后：
+下标： 10  11  12  13  14
+数据： 11  22  AA  55  02
+               ↑
+             tail=12</div>
+      <p><code>11 22</code> 的数值可能仍留在数组里，但任务以后从下标12开始读，所以它们已经无效。</p>
+      <p>如果跨过数组末尾，按位与会自动回绕：</p>
+      <div class="code">tail = 254，n = 4
+tail = (254 + 4) &amp; 255 = 2
+
+被越过的位置：254、255、0、1
+新的 tail：2</div>
+
+      <h3>问题二：tail 到底在什么时候改变？</h3>
+      <table>
+        <thead><tr><th>情况</th><th>执行</th><th>tail 如何变化</th></tr></thead>
+        <tbody>
+          <tr><td>噪声、包头错误</td><td><code>RxDrop(1)</code></td><td>向前移动1格</td></tr>
+          <tr><td>LEN 非法、XOR 错误</td><td><code>RxDrop(1)</code></td><td>向前移动1格</td></tr>
+          <tr><td>半包超时</td><td><code>RxDrop(1)</code></td><td>向前移动1格</td></tr>
+          <tr><td>完整帧解析成功</td><td><code>RxDrop(need)</code></td><td>越过整帧</td></tr>
+          <tr><td>数据还没收完整</td><td>直接返回0</td><td>不变，保留半包</td></tr>
+          <tr><td>旧接口 ReadByte</td><td>读取1字节</td><td>向前移动1格</td></tr>
+        </tbody>
+      </table>
+      <p class="callout warnbox"><code>ReadByte</code> 和 <code>ReadPacket</code> 都会修改同一个 tail，数据包模式下不能同时使用。</p>
+
+      <h3>问题三：收到 AA AA 55 时，哪个 AA 被丢掉？</h3>
+      <div class="code">第一次检查：
+数据： AA  AA  55
+偏移：  0   1   2
+       ↑
+      tail
+
+Peek(0) = AA       /* 第一个包头字节正确 */
+Peek(1) = AA       /* 这里应该是 55，匹配失败 */
+RxDrop(1)          /* 只丢第一个 AA */</div>
+      <p>移动 tail 后，第二个 AA 与后面的 55 正好组成新的合法包头：</p>
+      <div class="code">移动后：
+数据： AA  AA  55
+           ↑
+          tail
+
+新的 Peek(0) = 第二个 AA
+新的 Peek(1) = 55</div>
+      <div class="lesson"><strong>第二个 AA 不应该去除。</strong>它可能是真正包头的第一个字节。解析器只丢掉已经能够证明错误的那个字节。</div>
+
+      <h3>问题四：RxPeek 是什么函数？</h3>
+      <p><code>RxPeek(offset)</code> 表示查看“从当前 tail 开始，第 offset 个字节”，但不移动 tail。</p>
+      <div class="code">相对偏移：  0    1    2    3    4    5
+队列数据： AA   55   02   48   69   23
+字段：    SOF0 SOF1 LEN  DATA DATA XOR
+
+Peek(0) = AA
+Peek(1) = 55
+Peek(2) = 02</div>
+      <p>当前 <code>USART6_PKT_SOF_LEN=2</code>，所以：</p>
+      <div class="code">dlen = USART6_LL_RxPeek(USART6_PKT_SOF_LEN);
+
+等价于：
+dlen = USART6_LL_RxPeek(2);
+
+结果：
+dlen = 0x02      /* 本帧有2字节 DATA */</div>
+      <p>实际数组下标由下面的公式计算，因此即使跨过数组末尾也能正确读取：</p>
+      <div class="code">idx = (tail + offset) &amp; USART6_RX_MASK;</div>
+
+      <h3>问题五：USART6_LL_PktXor 是干什么的？</h3>
+      <p>它从队列中读取 LEN 指定数量的 DATA，重新计算接收包的 XOR，用来和帧尾校验字节比较。</p>
+      <div class="code">协议规定：
+XOR = LEN ^ DATA[0] ^ DATA[1] ^ ... ^ DATA[len-1]
+
+示例：
+LEN  = 02
+DATA = 48 69
+
+02 ^ 48 = 4A
+4A ^ 69 = 23
+
+计算结果 = 23
+收到的帧尾 = 23
+两者相同，数据包通过校验</div>
+      <p>函数参数 <code>data_off</code> 是 DATA[0] 相对 tail 的位置。当前包头2字节，加上LEN字段1字节，所以 DATA 从偏移3开始。</p>
+      <p>空包的 <code>len=0</code>，循环不执行，XOR 就是初值0，因此空包为 <code>AA 55 00 00</code>。</p>
+
+      <h3>问题六：^= 是什么运算符？</h3>
+      <p><code>^=</code> 是“按位异或后再赋值”：</p>
+      <div class="code">x ^= value;
+
+等价于：
+x = x ^ value;</div>
+      <p>异或逐位计算：相同为0，不同为1。</p>
+      <table>
+        <thead><tr><th>左边</th><th>右边</th><th>异或结果</th></tr></thead>
+        <tbody>
+          <tr><td>0</td><td>0</td><td>0</td></tr>
+          <tr><td>0</td><td>1</td><td>1</td></tr>
+          <tr><td>1</td><td>0</td><td>1</td></tr>
+          <tr><td>1</td><td>1</td><td>0</td></tr>
+        </tbody>
+      </table>
+      <div class="code">  0x02 = 0000 0010
+^ 0x48 = 0100 1000
+-------------------
+  0x4A = 0100 1010
+
+  0x4A = 0100 1010
+^ 0x69 = 0110 1001
+-------------------
+  0x23 = 0010 0011</div>
+      <p class="callout"><code>^</code> 在 C 语言里不是乘方。<code>2 ^ 3</code> 是按位异或，结果为1，不是8。</p>
+    </section>
+
     <section id="rtos">
-      <h2>第七章：把解析器放进 FreeRTOS 任务</h2>
+      <h2>第八章：把解析器放进 FreeRTOS 任务</h2>
       <table>
         <thead><tr><th>执行位置</th><th>负责什么</th><th>禁止什么</th></tr></thead>
         <tbody>
-          <tr><td>USART6 ISR</td><td>读 DR、处理 ORE、字节入队、立即返回</td><td>等待 TXE、printf、解包、回发</td></tr>
+          <tr><td>USART6/DMA ISR</td><td>清硬件标志、提交DMA新字节、记录错误、立即返回</td><td>等待TXE、printf、解包、回发</td></tr>
           <tr><td>USART6_PktTask</td><td>调用 ReadPacket，成功后处理或回发 DATA</td><td>同时调用 ReadByte 抢同一个 tail</td></tr>
           <tr><td>main</td><td>初始化、创建任务、启动调度器</td><td>继续运行旧的逐字节回显</td></tr>
         </tbody>
@@ -365,7 +493,7 @@ XOR  = 02 ^ 48 ^ 69 = 23
     </section>
 
     <section id="test">
-      <h2>第八章：上板测试正常路径和错误路径</h2>
+      <h2>第九章：上板测试正常路径和错误路径</h2>
       <p class="callout warnbox">P13，115200 8N1；发送区和接收区都选择 HEX，关闭本地回显。ASCII 模式发送字符“AA”，线上是 <code>41 41</code>，不是真正的 <code>0xAA</code>。</p>
       <table>
         <thead><tr><th>目的</th><th>发送（HEX）</th><th>预期结果</th></tr></thead>
@@ -382,7 +510,7 @@ XOR  = 02 ^ 48 ^ 69 = 23
     </section>
 
     <section id="mistakes">
-      <h2>第九章：常见错误、边界与练习</h2>
+      <h2>第十章：常见错误、边界与练习</h2>
       <div class="grid">
         <div class="card warn"><h3>在 ISR 中解包或回发</h3><p>等待 TXE/TC 会延长中断时间，影响其他中断和任务。</p></div>
         <div class="card warn"><h3>边检查边移动 tail</h3><p>遇到假包头时无法恢复原始字节。应先 Peek，最后统一 Drop。</p></div>
@@ -407,7 +535,7 @@ XOR  = 02 ^ 48 ^ 69 = 23
       <p class="callout">能不看源码回答这五题，说明已经理解了解析器的设计，而不只是记住函数名。</p>
     </section>
 
-    <footer>独立教材页 · 源码：Hardware/usart/usart6_ll.c · 原初等环形队列网页保持不变</footer>
+    <footer>独立教材页 · 源码：usart6_ll.c + usart6_packet.c + usart6_app.c · 原初等环形队列网页保持不变</footer>
   </main>
 </body>
 </html>

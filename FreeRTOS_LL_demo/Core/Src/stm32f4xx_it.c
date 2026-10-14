@@ -205,6 +205,12 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /* USER CODE BEGIN 1 */
+/* USART6_RX 的 DMA2 Stream1 硬件中断入口。具体处理留在 usart6_ll.c。 */
+void DMA2_Stream1_IRQHandler(void){
+  USART6_LL_DmaRxIRQHandler();
+}
+
+/* USART6 的 IDLE 和接收错误硬件中断入口。 */
 void  USART6_IRQHandler(void){
   USART6_LL_IRQHandler();
 }

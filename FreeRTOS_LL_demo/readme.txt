@@ -6,7 +6,7 @@ FreeRTOS_LL_demo 工程说明
 
 	FreeRTOS V11.3.1	内核已移植进 Keil，已创建 USART6 数据包任务并启动调度器。
 	USB OTG FS LL	初始化框架已写，软断开，还不能枚举。
-	USART6 LL	PC6/PC7，RX 中断 + 环形队列 + 数据包解析与回发。
+	USART6 LL	PC6/PC7，DMA 循环接收 + 软件队列 + 数据包解析与回发。
 
 详细说明分开三页，不要互相覆盖：
 
@@ -15,7 +15,8 @@ FreeRTOS_LL_demo 工程说明
 	USART 初始化	_explain/usart1_ll_init.html（文件名沿用）
 
 环形队列网页：_explain/usart_初等环形队列.html
-环形队列说明合在本文件后半，不再另开 txt。
+数据包解析教程：_explain/usart6_数据包解析教程.html
+数据包解析动画：_explain/usart6_数据包解析动画.html
 
 一、工程环境
 	MCU：STM32F407ZGT6，Cortex-M4F。
@@ -51,7 +52,7 @@ FreeRTOS_LL_demo 工程说明
 		HAL_IncTick();
 		调度器启动后再调用 xPortSysTickHandler()。
 
-	当前 main.c 创建 USART6_PktTask 后调用 vTaskStartScheduler()。
+	当前 main.c 创建 USART6_AppTask 后调用 vTaskStartScheduler()。
 	任务负责解析 USART6 数据包并按相同协议回发。
 	任务中优先 vTaskDelay()；不要在关中断或临界区里 HAL_Delay() / printf。
 
@@ -80,10 +81,13 @@ FreeRTOS_LL_demo 工程说明
 	不要启用 HAL_UART_MODULE_ENABLED。
 	Hardware 头文件统一 #include "stm32f4xx_hal.h"。
 	printf 走 fputc；Keil 打开 Use MicroLIB。
-	RXNE 中断、256 格环形队列、数据包解析和 FreeRTOS 回发任务已接入。
-	DMA + IDLE 尚未做。
+	DMA2 Stream1 Channel5 循环接收、IDLE 中断、256 格环形队列、
+	数据包解析和 FreeRTOS 回发任务已接入。
 
-	网页：_explain/usart1_ll_init.html
+	网页：
+		_explain/usart1_ll_init.html
+		_explain/usart6_数据包解析教程.html
+		_explain/usart6_数据包解析动画.html
 
 五、HAL 与 LL
 	HAL：系统时钟、HAL_Init、SysTick。
@@ -97,13 +101,13 @@ FreeRTOS_LL_demo 工程说明
 	2. FreeRTOS 头文件、extern、Keil 的 RTOS 路径和 FPU 是否还在。
 	3. HAL_PCD_MODULE_ENABLED、usb_fs 源文件和 Include Path 是否还在。
 	4. USE_FULL_LL_DRIVER、ll_gpio.c / ll_usart.c / ll_rcc.c 是否还在。
-	5. usart6_ll.c、..\Hardware\usart 是否还在。
+	5. usart6_ll.c、usart6_packet.c、usart6_app.c 和 ..\Hardware\usart 是否还在。
 	6. HAL_UART_MODULE_ENABLED 是否仍为注释。
 	7. PC6/PC7 与 PA11/PA12 有没有被 Cube 改走。
 	8. USB 未完成前是否仍软断开。
 
 七、下一步（按模块，不要混成一件事）
-	USART6	数据包回发已上板验证；需要时再做 DMA + IDLE。
+	USART6	数据包回发已上板验证；RX DMA + IDLE 已接入，等待上板验证。
 	USB	先 FIFO 和 EP0，再 OTG_FS_IRQHandler，完成前不连主机。
 	FreeRTOS	最小数据包任务和调度器已运行；后续按模块增加任务。
 
@@ -111,17 +115,26 @@ FreeRTOS_LL_demo 工程说明
 USART6 环形队列与数据包解析
 ==========================
 
-网页版：_explain/usart_初等环形队列.html
-网页文件名沿用原名称，不再拆分新的 txt 或 html。
+相关网页：
+	初等环形队列：_explain/usart_初等环形队列.html
+	数据包解析教程：_explain/usart6_数据包解析教程.html
+	交互解析动画：_explain/usart6_数据包解析动画.html
+
+解析动画使用示例字节 AA 55 AA 55 02 48 69 23，可播放、暂停、
+单步查看 Count、Peek、Drop、tail 移动、非法 LEN 重新同步和 XOR 校验。
 
 一、当前硬件
 	MCU：STM32F407ZGT6。
 	USART6_TX = PC6，USART6_RX = PC7，AF8，RX 上拉。
 	PCLK2 = 84MHz，115200 8N1。
 	座子：原理图 P13 的 UART6-TTL，不要再插 P20。
-	文件：Hardware/usart/usart6_ll.c、usart6_ll.h。
-	中断入口必须是 USART6_IRQHandler，再调用 USART6_LL_IRQHandler。
-	NVIC 优先级为 5。ISR 不调用 FreeRTOS API。
+	文件分层：
+	- usart6_ll.c/.h：GPIO、USART、DMA、软件字节队列和中断处理。
+	- usart6_packet.c/.h：AA 55 LEN DATA XOR协议解析和组包。
+	- usart6_app.c/.h：FreeRTOS数据包回显任务。
+	USART6 中断入口调用 USART6_LL_IRQHandler；
+	DMA2 Stream1 中断入口调用 USART6_LL_DmaRxIRQHandler。
+	USART6和DMA2 Stream1的NVIC优先级均为4。ISR不调用FreeRTOS API。
 
 	PA9/PA10 已空出。USB 仍然不要把 PA9 配成 VBUS。
 
@@ -158,9 +171,9 @@ USART6 环形队列与数据包解析
 		完整帧 = AA 55 02 48 69 23
 
 四、接收与重新同步
-	USART6_LL_ReadPacket 在任务中扫描环形队列：
+	USART6_Packet_Read在任务中扫描环形队列：
 
-	1. 包头不足：保留已有字节，等待接收中断继续入队。
+	1. 包头不足：保留已有字节，等待 DMA 接收中断或 IDLE 中断继续入队。
 	2. 包头不匹配：丢 1 字节，继续查找 AA 55。
 	3. LEN 不合法：丢 1 字节，继续查找包头。
 	4. 数据未收完整：保留半包，最多等待 20ms。
@@ -183,20 +196,23 @@ USART6 环形队列与数据包解析
 
 五、中断和任务分工
 	USART6_IRQHandler 只调用 USART6_LL_IRQHandler。
-	ISR 只读取 DR 并调用 RxPush 入队，随后立即返回。
-	ORE 时先读 DR，再把该字节入队并 return，避免中断反复进入。
+	DMA2_Stream1_IRQHandler 只调用 USART6_LL_DmaRxIRQHandler。
+	DMA2 Stream1 Channel5 以循环模式接收 USART6_RX。
+	DMA 半传输、传输完成或 USART IDLE 时，根据 NDTR 找出新字节，
+	再调用 RxPush 搬入软件环形队列。
+	ORE/FE/NE时按顺序读取SR、DR清除错误；错误字节不交给协议解析器。
 	不要在 ISR 中等待 TXE、发送数据、printf 或解析数据包。
 
-	main 创建 USART6_PktTask 后调用 vTaskStartScheduler。
-	测试任务调用 USART6_LL_ReadPacket；解析成功后再调用
-	USART6_LL_SendPacket 按相同协议回发。
+	main创建USART6_AppTask后调用vTaskStartScheduler。
+	应用任务调用USART6_Packet_Read；解析成功后再调用
+	USART6_Packet_Send按相同协议回发。
 	没有完整数据包时调用 vTaskDelay(1)，不在任务中持续空转。
 
-	USART6_LL_ReadByte 仍保留，但它和 USART6_LL_ReadPacket 共用 tail。
+	USART6_LL_ReadByte仍保留，但它和USART6_Packet_Read共用tail。
 	同一个接收通道只能选择一种读取方式，不能同时使用。
 
 六、发送
-	USART6_LL_SendPacket 依次发送 SOF、LEN、DATA 和 XOR。
+	USART6_Packet_Send依次发送SOF、LEN、DATA和XOR。
 	发送函数会轮询等待 TXE/TC，只允许在任务或普通线程中调用，
 	不能在 USART6 接收中断中调用。
 
@@ -224,7 +240,7 @@ USART6 环形队列与数据包解析
 		发送 AA 55 02 48 69 23 AA 55 01 41 40
 		应依次回两帧
 
-	前置噪声：
+	前置无效字节：
 		发送 11 22 33 AA 55 02 48 69 23
 		应丢弃 11 22 33，只回正常帧
 
@@ -237,7 +253,7 @@ USART6 环形队列与数据包解析
 		当前 LEN_MIN=0，应原样回发
 
 八、当前边界
-	接收仍是逐字节 RXNE 中断，DMA + IDLE 尚未做。
+	接收已改为 DMA2 Stream1 Channel5 循环接收，并由 HT、TC、IDLE 事件入队。
 	队列满时直接丢新字节，当前没有溢出计数。
 	XOR 只能发现常见传输错误，不是强校验；正式协议可改用 CRC16。
 	发送仍是轮询方式，发送期间当前任务会等待，但更高优先级任务仍可抢占。

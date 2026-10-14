@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "usb_fs_ll.h"
 #include "usart6_ll.h"
+#include "usart6_app.h"
 #include <stdio.h>
 #include "FreeRTOS.h"
 #include "task.h"
@@ -100,7 +101,7 @@ int main(void)
 
   /* 栈 256 字 = 1024 字节，给 payload[64] 和组包留余量。
  * 优先级 1，低于软件定时器任务（9），高于 Idle（0）。 */
-  if(xTaskCreate(USART6_LL_PktTask, "USART6_PktTask", 256, NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+  if(xTaskCreate(USART6_AppTask, "USART6_PktTask", 256, NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
     Error_Handler();
   }
   /* 启动后 SysTick 才会走进 xPortSysTickHandler。

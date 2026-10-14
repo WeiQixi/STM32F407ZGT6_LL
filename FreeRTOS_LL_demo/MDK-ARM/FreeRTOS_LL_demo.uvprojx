@@ -589,6 +589,16 @@
               <FileType>1</FileType>
               <FilePath>..\Hardware\usart\usart6_ll.c</FilePath>
             </File>
+            <File>
+              <FileName>usart6_packet.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Hardware\usart\usart6_packet.c</FilePath>
+            </File>
+            <File>
+              <FileName>usart6_app.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Hardware\usart\usart6_app.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
