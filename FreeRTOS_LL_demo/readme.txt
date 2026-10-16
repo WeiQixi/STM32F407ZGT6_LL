@@ -6,7 +6,7 @@ FreeRTOS_LL_demo 工程说明
 
 	FreeRTOS V11.3.1	内核已移植进 Keil，已创建 USART6 数据包任务并启动调度器。
 	USB OTG FS LL	初始化框架已写，软断开，还不能枚举。
-	USART6 LL	PC6/PC7，DMA 循环接收 + 软件队列 + 数据包解析与回发。
+	USART6 LL	PC6/PC7，DMA 循环接收 + DMA 数据包发送 + 软件队列 + 数据包解析。
 
 详细说明按模块分开，不要互相覆盖：
 
@@ -83,6 +83,7 @@ FreeRTOS_LL_demo 工程说明
 	printf 走 fputc；Keil 打开 Use MicroLIB。
 	DMA2 Stream1 Channel5 循环接收、IDLE 中断、256 格环形队列、
 	数据包解析和 FreeRTOS 回发任务已接入。
+	数据包回发使用 DMA2 Stream6 Channel5；启动打印和 printf 仍轮询 TXE/TC。
 
 	网页：
 		_explain/usart/usart1/usart1_ll_init.html
@@ -90,6 +91,7 @@ FreeRTOS_LL_demo 工程说明
 		_explain/usart/usart6/driver/02_usart6_无DMA收发.html
 		_explain/usart/usart6/driver/03_usart6_DMA初始化.html
 		_explain/usart/usart6/driver/04_usart6_DMA接收与轮询发送.html
+		_explain/usart/usart6/driver/05_usart6_DMA发送.html
 		_explain/usart/usart6/packet/usart6_数据包解析教程.html
 		_explain/usart/usart6/packet/usart6_数据包解析动画.html
 
@@ -111,7 +113,7 @@ FreeRTOS_LL_demo 工程说明
 	8. USB 未完成前是否仍软断开。
 
 七、下一步（按模块，不要混成一件事）
-	USART6	数据包回发已上板验证；RX DMA + IDLE 已接入，等待上板验证。
+	USART6	RX DMA、TX DMA 和数据包回发代码已接入，Keil 编译通过，等待上板验证。
 	USB	先 FIFO 和 EP0，再 OTG_FS_IRQHandler，完成前不连主机。
 	FreeRTOS	最小数据包任务和调度器已运行；后续按模块增加任务。
 
@@ -125,6 +127,7 @@ USART6 环形队列与数据包解析
 	无DMA收发：_explain/usart/usart6/driver/02_usart6_无DMA收发.html
 	DMA初始化：_explain/usart/usart6/driver/03_usart6_DMA初始化.html
 	DMA接收与轮询发送：_explain/usart/usart6/driver/04_usart6_DMA接收与轮询发送.html
+	DMA发送：_explain/usart/usart6/driver/05_usart6_DMA发送.html
 	数据包解析教程：_explain/usart/usart6/packet/usart6_数据包解析教程.html
 	交互解析动画：_explain/usart/usart6/packet/usart6_数据包解析动画.html
 
@@ -140,9 +143,11 @@ USART6 环形队列与数据包解析
 	- usart6_ll.c/.h：GPIO、USART、DMA、软件字节队列和中断处理。
 	- usart6_packet.c/.h：AA 55 LEN DATA XOR协议解析和组包。
 	- usart6_app.c/.h：FreeRTOS数据包回显任务。
-	USART6 中断入口调用 USART6_LL_IRQHandler；
+	USART6 中断入口调用 USART6_LL_IRQHandler。
 	DMA2 Stream1 中断入口调用 USART6_LL_DmaRxIRQHandler。
-	USART6和DMA2 Stream1的NVIC优先级均为4。ISR不调用FreeRTOS API。
+	DMA2 Stream6 中断入口调用 USART6_LL_DmaTxIRQHandler。
+	USART6 与 DMA2 Stream1 的 NVIC 优先级为 4，不调用 FreeRTOS API。
+	DMA2 Stream6 的 NVIC 优先级为 5，完成中断调用 vTaskNotifyGiveFromISR。
 
 	PA9/PA10 已空出。USB 仍然不要把 PA9 配成 VBUS。
 
@@ -205,6 +210,7 @@ USART6 环形队列与数据包解析
 五、中断和任务分工
 	USART6_IRQHandler 只调用 USART6_LL_IRQHandler。
 	DMA2_Stream1_IRQHandler 只调用 USART6_LL_DmaRxIRQHandler。
+	DMA2_Stream6_IRQHandler 只调用 USART6_LL_DmaTxIRQHandler。
 	DMA2 Stream1 Channel5 以循环模式接收 USART6_RX。
 	DMA 半传输、传输完成或 USART IDLE 时，根据 NDTR 找出新字节，
 	再调用 RxPush 搬入软件环形队列。
@@ -220,12 +226,12 @@ USART6 环形队列与数据包解析
 	同一个接收通道只能选择一种读取方式，不能同时使用。
 
 六、发送
-	USART6_Packet_Send依次发送SOF、LEN、DATA和XOR。
-	发送函数会轮询等待 TXE/TC，只允许在任务或普通线程中调用，
-	不能在 USART6 接收中断中调用。
+	数据包先写入 USART6_Packet_Send() 里的临时数组 frame[68]，再交给 TX DMA。
+	这不是长期缓冲区：函数返回后这块内存就失效，所以发送完成前函数不能返回。
+	TX DMA 使用 DMA2 Stream6 Channel5。启动信息和 printf 仍轮询 TXE/TC。
 
 	当前测试任务收到合法数据包后原样组包回发。
-	普通键盘字符不符合协议，不再逐字节回显。
+	普通键盘字符不符合协议，串口助手需发送完整 HEX 帧。
 
 七、测试数据
 	串口：P13，115200 8N1。
@@ -261,8 +267,9 @@ USART6 环形队列与数据包解析
 		当前 LEN_MIN=0，应原样回发
 
 八、当前边界
-	接收已改为 DMA2 Stream1 Channel5 循环接收，并由 HT、TC、IDLE 事件入队。
+	接收使用 DMA2 Stream1 Channel5 循环模式，并由 HT、TC、IDLE 事件入队。
 	队列满时直接丢新字节，当前没有溢出计数。
-	XOR 只能发现常见传输错误，不是强校验；正式协议可改用 CRC16。
-	发送仍是轮询方式，发送期间当前任务会等待，但更高优先级任务仍可抢占。
-	USB 仍处于软断开状态，不要连接主机测试枚举。
+	XOR 适合发现常见传输错误；正式协议可改用 CRC16。
+	数据包发送使用 DMA2 Stream6。等待 DMA 期间当前任务阻塞，CPU 可运行其他任务。
+	代码未保存发送超时次数和 DMA 错误日志。TX DMA 尚未上板验证。
+	USB 仍处于软断开状态，不连接主机测试枚举。

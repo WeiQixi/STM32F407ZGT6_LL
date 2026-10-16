@@ -210,6 +210,11 @@ void DMA2_Stream1_IRQHandler(void){
   USART6_LL_DmaRxIRQHandler();
 }
 
+/* USART6_TX 的 DMA2 Stream6 硬件中断入口。 */
+void DMA2_Stream6_IRQHandler(void){
+  USART6_LL_DmaTxIRQHandler();
+}
+
 /* USART6 的 IDLE 和接收错误硬件中断入口。 */
 void  USART6_IRQHandler(void){
   USART6_LL_IRQHandler();

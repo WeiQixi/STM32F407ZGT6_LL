@@ -15,12 +15,13 @@ extern "C" {
 #error "USART6_RX_BUF_SIZE must be a power of 2"
 #endif
 
-/* GPIO、USART6、DMA2 Stream1和中断初始化。 */
+/* GPIO、USART6、RX Stream1、TX Stream6和中断初始化。 */
 void USART6_LL_Init(void);
 
-/* 轮询发送原始字节，不添加数据包格式。 */
+/* 轮询发送用于启动信息；DMA发送用于调度器启动后的任务。 */
 void USART6_LL_SendByte(uint8_t data);
 void USART6_LL_Send(const uint8_t *data, uint16_t len);
+int USART6_LL_SendDma(const uint8_t *data, uint16_t len);
 
 /*
  * 软件接收队列接口。
@@ -35,6 +36,7 @@ int USART6_LL_ReadByte(uint8_t *data);
 /* 硬件中断入口调用的内部处理函数。 */
 void USART6_LL_IRQHandler(void);
 void USART6_LL_DmaRxIRQHandler(void);
+void USART6_LL_DmaTxIRQHandler(void);
 
 #ifdef __cplusplus
 }

@@ -11,9 +11,17 @@
 #include "stm32f4xx_ll_gpio.h"
 #include "stm32f4xx_ll_bus.h"
 #include "stm32f4xx_ll_dma.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <stdio.h>
 
+#define USART6_LL_BAUD_RATE            115200U
+#define USART6_TX_BITS_PER_BYTE       10U
+#define USART6_TX_TIMEOUT_MARGIN_MS   10U
+
 static void USART6_LL_RxDmaInit(void);
+static void USART6_LL_TxDmaInit(void);
+static void USART6_LL_TxDmaClearFlags(void);
 
 /**
  * @brief 配置PC6为USART6_TX，PC7为USART6_RX。
@@ -40,9 +48,10 @@ static void USART6_LL_GPIO_Init(void){
 }
 
 /**
- * @brief 初始化GPIO、USART6、DMA接收和NVIC中断。
+ * @brief 初始化GPIO、USART6、DMA收发和NVIC中断。
  *
- * USART6配置为115200、8N1；接收使用DMA2 Stream1 Channel5循环模式。
+ * USART6配置为115200、8N1；RX使用DMA2 Stream1 Channel5循环模式，
+ * TX使用DMA2 Stream6 Channel5普通模式。
  */
 void USART6_LL_Init(void){
     LL_USART_InitTypeDef usart = {0};
@@ -55,7 +64,7 @@ void USART6_LL_Init(void){
 
     LL_USART_ConfigAsyncMode(USART6);
 
-    usart.BaudRate = 115200;
+    usart.BaudRate = USART6_LL_BAUD_RATE;
     usart.DataWidth = LL_USART_DATAWIDTH_8B;
     usart.StopBits = LL_USART_STOPBITS_1;
     usart.Parity = LL_USART_PARITY_NONE;
@@ -71,7 +80,9 @@ void USART6_LL_Init(void){
      * 不再为每个字节进入一次 RXNE 中断。
      */
     USART6_LL_RxDmaInit();
+    USART6_LL_TxDmaInit();
     LL_USART_EnableDMAReq_RX(USART6);
+    LL_USART_EnableDMAReq_TX(USART6);
     LL_USART_Enable(USART6);
 
     /* 清除初始化阶段可能残留的 IDLE，避免启用中断后立即误触发。 */
@@ -85,17 +96,33 @@ void USART6_LL_Init(void){
     HAL_NVIC_SetPriority(USART6_IRQn, 4, 0);
     HAL_NVIC_EnableIRQ(USART6_IRQn);
 
+    /*
+     * TX DMA完成中断会调用FreeRTOS的FromISR通知接口，优先级必须是
+     * configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY允许的5或更低。
+     */
+    HAL_NVIC_SetPriority(DMA2_Stream6_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(DMA2_Stream6_IRQn);
+
     /* IDLE 用来及时提交不足半个 DMA 缓冲区的短数据。 */
     LL_USART_EnableIT_IDLE(USART6);
     /* DMA 接收模式下，EIE 负责报告 ORE、FE 和 NE。 */
     LL_USART_EnableIT_ERROR(USART6);
 }
 
+/* TX DMA状态：一次只允许一个任务启动发送。 */
+static volatile uint8_t usart6_tx_dma_busy;
+static volatile int8_t usart6_tx_dma_result;
+static volatile TaskHandle_t usart6_tx_dma_wait_task;
+
 /**
  * @brief 轮询发送一个原始字节。
  * @param data 待发送字节。
+ *
+ * 该接口保留给调度器启动前的启动信息和printf。若TX DMA正在工作，
+ * 先等待DMA释放USART6发送通道，避免轮询数据插入DMA数据中间。
  */
 void USART6_LL_SendByte(uint8_t data){
+    while(usart6_tx_dma_busy != 0U);
     while(!LL_USART_IsActiveFlag_TXE(USART6));
     LL_USART_TransmitData8(USART6, data);
 }
@@ -110,6 +137,87 @@ void USART6_LL_Send(const uint8_t *data, uint16_t len){
     if (data == 0) return;
     for (i = 0; i < len; i++) USART6_LL_SendByte(data[i]);
     while (!LL_USART_IsActiveFlag_TC(USART6));
+}
+
+/**
+ * @brief 使用DMA发送一组原始字节，并阻塞当前任务等待完成。
+ * @param data DMA读取的源数组；等待返回前必须保持有效。
+ * @param len 字节数，范围为1至65535。
+ * @return 完成返回1；参数无效、发送忙、超时或DMA错误返回0。
+ *
+ * 等待期间当前任务进入阻塞态，CPU可以运行其他任务。DMA的TC表示
+ * 最后一个字节已经写入USART6->DR；唤醒后再等待USART TC，确保最后
+ * 一个停止位已经从PC6发送完成。
+ */
+int USART6_LL_SendDma(const uint8_t *data, uint16_t len){
+    uint32_t timeout_ms;
+    TickType_t timeout_ticks;
+    TaskHandle_t current_task;
+
+    if((data == 0) || (len == 0U)) return 0;
+    if(xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) return 0;
+
+    current_task = xTaskGetCurrentTaskHandle();
+    (void)ulTaskNotifyTake(pdTRUE, 0U); /* 清除本任务上一次TX完成通知。 */
+
+    taskENTER_CRITICAL();
+    if(usart6_tx_dma_busy != 0U){
+        taskEXIT_CRITICAL();
+        return 0;
+    }
+
+    usart6_tx_dma_busy = 1U;
+    usart6_tx_dma_result = 0;
+    usart6_tx_dma_wait_task = current_task;
+
+    LL_DMA_DisableStream(DMA2, LL_DMA_STREAM_6);
+    while(LL_DMA_IsEnabledStream(DMA2, LL_DMA_STREAM_6)){
+        /* 等待硬件确认Stream6停止后再修改地址和NDTR。 */
+    }
+
+    USART6_LL_TxDmaClearFlags();
+    LL_DMA_SetMemoryAddress(DMA2, LL_DMA_STREAM_6, (uint32_t)data);
+    LL_DMA_SetDataLength(DMA2, LL_DMA_STREAM_6, len);
+    LL_DMA_EnableStream(DMA2, LL_DMA_STREAM_6);
+    taskEXIT_CRITICAL();
+
+    /* 115200 8N1每字节10位，再增加10ms余量用于调度和中断延迟。 */
+    timeout_ms = (((uint32_t)len * USART6_TX_BITS_PER_BYTE * 1000U) +
+                  (USART6_LL_BAUD_RATE - 1U)) / USART6_LL_BAUD_RATE;
+    timeout_ms += USART6_TX_TIMEOUT_MARGIN_MS;
+    timeout_ticks = pdMS_TO_TICKS(timeout_ms);
+    if(timeout_ticks == 0U) timeout_ticks = 1U;
+
+    if(ulTaskNotifyTake(pdTRUE, timeout_ticks) == 0U){
+        taskENTER_CRITICAL();
+        LL_DMA_DisableStream(DMA2, LL_DMA_STREAM_6);
+        while(LL_DMA_IsEnabledStream(DMA2, LL_DMA_STREAM_6)){
+            /* 超时恢复：等待Stream6真正停止。 */
+        }
+        USART6_LL_TxDmaClearFlags();
+        usart6_tx_dma_wait_task = 0;
+        usart6_tx_dma_result = -1;
+        usart6_tx_dma_busy = 0U;
+        taskEXIT_CRITICAL();
+        return 0;
+    }
+
+    if(usart6_tx_dma_result != 1){
+        taskENTER_CRITICAL();
+        usart6_tx_dma_busy = 0U;
+        taskEXIT_CRITICAL();
+        return 0;
+    }
+
+    /*
+     * DMA TC只表示最后一个字节已经写入DR。保持busy直到USART TC置位，
+     * 防止其他任务在最后一个停止位发送完以前启动下一笔发送。
+     */
+    while(!LL_USART_IsActiveFlag_TC(USART6));
+    taskENTER_CRITICAL();
+    usart6_tx_dma_busy = 0U;
+    taskEXIT_CRITICAL();
+    return 1;
 }
 
 /**
@@ -261,6 +369,54 @@ static void USART6_LL_RxDmaInit(void){
 }
 
 /**
+ * @brief 清除DMA2 Stream6的TX状态标志。
+ *
+ * TC、TE、DME和FE是硬件保持型状态，软件确认后必须主动清除。
+ * TX未启用半传输中断，因此这里不处理HT。
+ */
+static void USART6_LL_TxDmaClearFlags(void){
+    LL_DMA_ClearFlag_TC6(DMA2);
+    LL_DMA_ClearFlag_TE6(DMA2);
+    LL_DMA_ClearFlag_DME6(DMA2);
+    LL_DMA_ClearFlag_FE6(DMA2);
+}
+
+/**
+ * @brief 配置USART6_TX的DMA发送通道。
+ *
+ * 固定映射为DMA2 Stream6 Channel5。Stream使用普通模式，每次发送前
+ * 由USART6_LL_SendDma()重新设置源地址和NDTR。
+ */
+static void USART6_LL_TxDmaInit(void){
+    LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA2);
+
+    LL_DMA_DisableStream(DMA2, LL_DMA_STREAM_6);
+    while(LL_DMA_IsEnabledStream(DMA2, LL_DMA_STREAM_6)){
+        /* EN清零后才允许修改Stream6配置。 */
+    }
+
+    LL_DMA_SetChannelSelection(DMA2, LL_DMA_STREAM_6, LL_DMA_CHANNEL_5);
+    LL_DMA_ConfigTransfer(DMA2, LL_DMA_STREAM_6,
+                          LL_DMA_DIRECTION_MEMORY_TO_PERIPH |
+                          LL_DMA_MODE_NORMAL |
+                          LL_DMA_PERIPH_NOINCREMENT |
+                          LL_DMA_MEMORY_INCREMENT |
+                          LL_DMA_PDATAALIGN_BYTE |
+                          LL_DMA_MDATAALIGN_BYTE |
+                          LL_DMA_PRIORITY_HIGH);
+    LL_DMA_DisableFifoMode(DMA2, LL_DMA_STREAM_6);
+    LL_DMA_SetPeriphAddress(DMA2, LL_DMA_STREAM_6, (uint32_t)&USART6->DR);
+    LL_DMA_SetMemoryAddress(DMA2, LL_DMA_STREAM_6, 0U);
+    LL_DMA_SetDataLength(DMA2, LL_DMA_STREAM_6, 0U);
+
+    USART6_LL_TxDmaClearFlags();
+
+    LL_DMA_EnableIT_TC(DMA2, LL_DMA_STREAM_6);
+    LL_DMA_EnableIT_TE(DMA2, LL_DMA_STREAM_6);
+    LL_DMA_EnableIT_DME(DMA2, LL_DMA_STREAM_6);
+}
+
+/**
  * @brief 在TE或DME后重新启动DMA接收。
  *
  * 保留通道、方向和地址配置，重装NDTR并从DMA缓冲区首地址重新接收。
@@ -381,4 +537,42 @@ void USART6_LL_DmaRxIRQHandler(void){
     LL_DMA_ClearFlag_DME1(DMA2);
     LL_DMA_ClearFlag_FE1(DMA2);
     USART6_LL_RxDmaDrain();
+}
+
+
+/**
+ * @brief 处理DMA2 Stream6的TX完成、TE和DME事件。
+ *
+ * DMA中断优先级为5，可以调用FreeRTOS FromISR接口。处理结果写入状态
+ * 后通知等待任务；任务被唤醒后检查结果并等待USART TC。
+ */
+void USART6_LL_DmaTxIRQHandler(void){
+    BaseType_t higher_priority_task_woken = pdFALSE;
+    TaskHandle_t wait_task;
+    int8_t result;
+
+    result = 0;
+    if((LL_DMA_IsActiveFlag_TE6(DMA2) != 0U) ||
+       (LL_DMA_IsActiveFlag_DME6(DMA2) != 0U)){
+        result = -1;
+    }else if(LL_DMA_IsActiveFlag_TC6(DMA2) != 0U){
+        result = 1;
+    }
+
+    USART6_LL_TxDmaClearFlags();
+
+    if(result == 0) return;
+
+    wait_task = (TaskHandle_t)usart6_tx_dma_wait_task;
+    usart6_tx_dma_result = result;
+    usart6_tx_dma_wait_task = 0;
+
+    /*
+     * busy由等待任务在检查结果、等待USART TC以后清零。
+     * 这样DMA TC到线路TC之间仍保持发送通道独占。
+     */
+    if(wait_task != 0){
+        vTaskNotifyGiveFromISR(wait_task, &higher_priority_task_woken);
+        portYIELD_FROM_ISR(higher_priority_task_woken);
+    }
 }

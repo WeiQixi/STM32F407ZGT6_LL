@@ -67,9 +67,12 @@ void USART6_Packet_Send(const uint8_t *payload, uint16_t len){
         value ^= payload[index];
     }
 
-    /* XOR放在帧尾，最后把完整帧交给底层一次发送。 */
+    /*
+     * XOR放在帧尾，再由TX DMA发送完整帧。USART6_LL_SendDma()会阻塞
+     * 当前任务直到DMA读完frame，所以局部数组在传输期间始终有效。
+     */
     frame[frame_pos++] = value;
-    USART6_LL_Send(frame, frame_pos);
+    (void)USART6_LL_SendDma(frame, frame_pos);
 }
 
 /**
