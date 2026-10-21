@@ -92,6 +92,7 @@ FreeRTOS_LL_demo 工程说明
 		_explain/usart/usart6/driver/03_usart6_DMA初始化.html
 		_explain/usart/usart6/driver/04_usart6_DMA接收与轮询发送.html
 		_explain/usart/usart6/driver/05_usart6_DMA发送.html
+		_explain/usart/usart6/driver/06_usart6_双槽发送.html
 		_explain/usart/usart6/packet/usart6_数据包解析教程.html
 		_explain/usart/usart6/packet/usart6_数据包解析动画.html
 
@@ -113,7 +114,7 @@ FreeRTOS_LL_demo 工程说明
 	8. USB 未完成前是否仍软断开。
 
 七、下一步（按模块，不要混成一件事）
-	USART6	RX DMA、TX DMA 和数据包回发代码已接入，Keil 编译通过，等待上板验证。
+	USART6	数据包发送改为两个静态槽。代码已接入，尚未重新编译，也没有上板。
 	USB	先 FIFO 和 EP0，再 OTG_FS_IRQHandler，完成前不连主机。
 	FreeRTOS	最小数据包任务和调度器已运行；后续按模块增加任务。
 
@@ -128,6 +129,7 @@ USART6 环形队列与数据包解析
 	DMA初始化：_explain/usart/usart6/driver/03_usart6_DMA初始化.html
 	DMA接收与轮询发送：_explain/usart/usart6/driver/04_usart6_DMA接收与轮询发送.html
 	DMA发送：_explain/usart/usart6/driver/05_usart6_DMA发送.html
+	两个发送槽：_explain/usart/usart6/driver/06_usart6_双槽发送.html
 	数据包解析教程：_explain/usart/usart6/packet/usart6_数据包解析教程.html
 	交互解析动画：_explain/usart/usart6/packet/usart6_数据包解析动画.html
 
@@ -147,7 +149,7 @@ USART6 环形队列与数据包解析
 	DMA2 Stream1 中断入口调用 USART6_LL_DmaRxIRQHandler。
 	DMA2 Stream6 中断入口调用 USART6_LL_DmaTxIRQHandler。
 	USART6 与 DMA2 Stream1 的 NVIC 优先级为 4，不调用 FreeRTOS API。
-	DMA2 Stream6 的 NVIC 优先级为 5，完成中断调用 vTaskNotifyGiveFromISR。
+	DMA2 Stream6 的 NVIC 优先级为 5，完成中断调用 xSemaphoreGiveFromISR。
 
 	PA9/PA10 已空出。USB 仍然不要把 PA9 配成 VBUS。
 
@@ -218,6 +220,7 @@ USART6 环形队列与数据包解析
 	不要在 ISR 中等待 TXE、发送数据、printf 或解析数据包。
 
 	main创建USART6_AppTask后调用vTaskStartScheduler。
+	启动成功后不再回到 main 后面的循环。任务要在启动调度器之前创建。
 	应用任务调用USART6_Packet_Read；解析成功后再调用
 	USART6_Packet_Send按相同协议回发。
 	没有完整数据包时调用 vTaskDelay(1)，不在任务中持续空转。
@@ -226,9 +229,65 @@ USART6 环形队列与数据包解析
 	同一个接收通道只能选择一种读取方式，不能同时使用。
 
 六、发送
-	数据包先写入 USART6_Packet_Send() 里的临时数组 frame[68]，再交给 TX DMA。
-	这不是长期缓冲区：函数返回后这块内存就失效，所以发送完成前函数不能返回。
-	TX DMA 使用 DMA2 Stream6 Channel5。启动信息和 printf 仍轮询 TXE/TC。
+	一次数据包发送的顺序：
+	USART6_Packet_Send → USART6_LL_TxAlloc → 写入 data[] →
+	USART6_LL_TxCommit → USART6_LL_TxKick →
+	DMA2 Stream6 完成中断 USART6_LL_DmaTxIRQHandler。
+	槽是 usart6_tx_slot[2]，每个元素含 data[68]、len、state。
+	DMA 搬走的字节数是提交时的 len。
+
+	USART6_Packet_Send(payload, len)：
+	payload 为空且 len 不为 0，或 len 大于 64，直接返回，不领槽。
+	TxAlloc 返回 0 也直接返回。
+	frame_pos 从 0 起，frame[frame_pos++] 先写入再加下标。
+	顺序为 AA、55、LEN、DATA、XOR。XOR 初值是 LEN，只异或 DATA。
+	载荷 Hi 写完后 data[0..5] 为 AA 55 02 48 69 23，frame_pos 为 6。
+	然后 TxCommit(slot_id, frame_pos)。空包提交长度为 4，最长为 68。
+
+	USART6_LL_TxAlloc：
+	slot_id 为 NULL、信号量句柄为 NULL，或调度器未运行，返回 NULL，槽不变。
+	NULL 表示没传入槽号地址，不是槽号 0。
+	接着 xSemaphoreTake(usart6_tx_free, portMAX_DELAY)。
+	创建时计数为 2。减到 0 以后，下一个任务停在 Take 里，直到完成中断 GiveFromISR。
+	正常醒来返回 pdTRUE。返回 NULL 只在 Take 失败时走到。
+	临界区内 id = wr。该槽不是 EMPTY：退出临界区，Give 把计数还回，返回 NULL，wr 不变。
+	是 EMPTY：状态改为 FILL，len 先写 0，wr = (wr + 1) % 2。
+	退出临界区后把槽号写入 *slot_id，返回 data 地址。字节在回到 Packet_Send 之后才写入。
+
+	USART6_LL_TxCommit：
+	槽号大于等于 2、len 为 0 或 len 大于 68，进临界区前返回。
+	Packet_Send 传来的 frame_pos 是 4 到 68，走不到这三句。
+	临界区内状态必须已是 FILL，否则退出并返回，信号量不加。
+	然后写入 len，状态改为 READY，调用 TxKick，再退出临界区。
+
+	USART6_LL_TxKick，调用时已经在临界区：
+	busy 不为 0，或 slot[rd] 不是 READY，直接返回。
+	返回前 Commit 已经把本次槽写成 READY。
+	第二句看的是 rd。刚提交的若是槽 1，而 rd 仍指着还在 FILL 的槽 0，就从这里返回，槽 1 的字节留着。
+	两句都通过：该槽改为 SEND，busy = 1，need_tc = 0。
+	关闭 Stream6 并等到 EN 为 0，清除 TC、TE、DME、FE。
+	内存地址设为 slot[rd].data，NDTR 设为该槽 len，再打开 Stream6。
+
+	USART6_LL_DmaTxIRQHandler，优先级 5：
+	先看 TE、DME、TC。清这四个标志。三个事件都没有则返回，不改槽，不 Give。
+	临界区内 slot[rd] 不是 SEND 也返回，不 Give。
+	是 SEND：改回 EMPTY，len 清 0，rd = (rd + 1) % 2，busy 清 0。
+	新的 slot[rd] 已是 READY 就再调用 TxKick，busy 会重新变为 1。
+	不是 READY 则 need_tc = 1，printf 写 DR 前要先等 USART TC。
+	退出临界区后 xSemaphoreGiveFromISR，需要时 portYIELD_FROM_ISR。
+	Give 还的是刚释放的那一个槽。TE、DME 同样释放，不重发。
+
+	USART6_LL_SendByte 给定启动信息和 printf，一次调用发送一个字节。
+	调度器未运行：等 TXE，写 DR，返回。
+	调度器已运行，进入 for(;;)：
+	busy 为 1 则空等，另一个槽空着也等。
+	need_tc 为 1 则再等 USART TC。
+	进入临界区再看 busy。仍为 0：清 need_tc，等 TXE，写入这个字节，退出临界区并返回。
+	已变为 1：退出临界区，for 的结尾回到循环开头。
+	printf 每个字符经 fputc 调用一次 SendByte。一次返回之后，其他任务可以提交一整帧。
+	SendByte 若停在挡住优先级 5 的临界区里，或停在 Stream6 中断函数里，完成中断无法把 busy 清 0。
+
+	逐函数过程见 _explain/usart/usart6/driver/06_usart6_双槽发送.html。
 
 	当前测试任务收到合法数据包后原样组包回发。
 	普通键盘字符不符合协议，串口助手需发送完整 HEX 帧。
@@ -266,10 +325,15 @@ USART6 环形队列与数据包解析
 		发送 AA 55 00 00
 		当前 LEN_MIN=0，应原样回发
 
+	同一帧连在一起：
+		发送 AA 55 02 48 69 23 AA 55 02 48 69 23 AA 55 02 48 69 23
+		每一帧 LEN 仍是 2，共 6 字节。整段按帧切开，应逐帧回同样的 6 字节。
+		64 是单帧 DATA 的上限，不是助手里连在一起的总字节数。
+
 八、当前边界
 	接收使用 DMA2 Stream1 Channel5 循环模式，并由 HT、TC、IDLE 事件入队。
 	队列满时直接丢新字节，当前没有溢出计数。
 	XOR 适合发现常见传输错误；正式协议可改用 CRC16。
-	数据包发送使用 DMA2 Stream6。等待 DMA 期间当前任务阻塞，CPU 可运行其他任务。
-	代码未保存发送超时次数和 DMA 错误日志。TX DMA 尚未上板验证。
+	数据包发送使用两个槽和 DMA2 Stream6。槽满时当前任务等待空槽，CPU 可运行其他任务。
+	代码未保存 DMA 错误日志，失败的帧不重发。双槽发送尚未重新编译，也没有上板。
 	USB 仍处于软断开状态，不连接主机测试枚举。

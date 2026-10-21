@@ -7,84 +7,47 @@
 <body>
 <header><div class="wrap">
   <h1>USART6 教程 5：DMA发送</h1>
-  <p>当前分支的数据包发送：DMA2 Stream6 Channel5 把内存字节写入 USART6-&gt;DR，发送任务用通知等待完成。</p>
-  <div class="badges"><span class="badge">DMA2 Stream6 Channel5</span><span class="badge">普通模式</span><span class="badge">任务通知</span><span class="badge">启动打印仍轮询</span></div>
+  <p>数据包发送使用两个静态槽。协议组帧在 <code>usart6_packet.c</code>，槽和 DMA 在 <code>usart6_ll.c</code>。</p>
+  <div class="badges"><span class="badge">DMA2 Stream6 Channel5</span><span class="badge">两个槽</span><span class="badge">普通模式</span><span class="badge">启动打印仍轮询</span></div>
 </div></header>
-<nav><div class="wrap"><a href="01_usart6_初始化.html">1 初始化</a><a href="02_usart6_无DMA收发.html">2 无DMA收发</a><a href="03_usart6_DMA初始化.html">3 DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">4 DMA接收</a><a class="current" href="05_usart6_DMA发送.html">5 DMA发送</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
+<nav><div class="wrap"><a href="01_usart6_初始化.html">1 初始化</a><a href="02_usart6_无DMA收发.html">2 无DMA收发</a><a href="03_usart6_DMA初始化.html">3 DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">4 DMA接收</a><a class="current" href="05_usart6_DMA发送.html">5 DMA发送</a><a href="06_usart6_双槽发送.html">6 两个槽</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
 <main>
 <section>
-  <h2>1. 两条发送路径</h2>
+  <h2>1. 谁处理什么</h2>
   <div class="grid">
-    <div class="card green"><h3>数据包</h3><p><code>USART6_Packet_Send()</code>使用函数内临时数组 <code>frame[68]</code> 组帧，再交给 TX DMA。</p><p>函数返回后这块内存失效，因此 DMA 读完之前函数不返回。</p></div>
-    <div class="card blue"><h3>启动信息和 printf</h3><p><code>USART6_LL_Send()</code>与 <code>fputc()</code>仍逐字节等待 TXE。</p><p><code>busy</code>为1时，轮询发送先等待当前 DMA 结束。</p></div>
+    <div class="card green"><h3>usart6_packet.c</h3><p>写入 <code>AA 55</code>、<code>LEN</code>、<code>DATA</code> 和 <code>XOR</code>。</p><p>调用处只提供这一次的 DATA。</p></div>
+    <div class="card blue"><h3>usart6_ll.c</h3><p>两个槽、DMA 启动和完成中断。</p><p>不识别包头、长度和校验。</p></div>
   </div>
-  <div class="path"><div class="node"><strong>任务组帧</strong><code>frame[68]</code></div><div class="arrow">→</div><div class="node"><strong>启动 Stream6</strong>设置地址和 NDTR</div><div class="arrow">→</div><div class="node"><strong>任务阻塞</strong>等待通知</div><div class="arrow">→</div><div class="node"><strong>DMA完成中断</strong>通知计数加1</div><div class="arrow">→</div><div class="node"><strong>等待 USART TC</strong>停止位发完</div></div>
+  <div class="path"><div class="node"><strong>领取空槽</strong><code>TxAlloc()</code></div><div class="arrow">→</div><div class="node"><strong>组帧</strong>写入槽的 data[]</div><div class="arrow">→</div><div class="node"><strong>提交</strong><code>TxCommit()</code></div><div class="arrow">→</div><div class="node"><strong>DMA</strong>读这个槽</div><div class="arrow">→</div><div class="node"><strong>完成中断</strong>换下一个槽</div></div>
 </section>
 <section>
-  <h2>2. 发送变量</h2>
-  <table><thead><tr><th>变量</th><th>含义</th><th>谁修改</th><th>何时变化</th></tr></thead><tbody>
-    <tr><td><code>frame[68]</code></td><td>函数内临时数组，只在本次 <code>Packet_Send()</code> 调用期间有效</td><td><code>USART6_Packet_Send()</code></td><td>组帧后交给 DMA；函数返回后失效</td></tr>
-    <tr><td><code>usart6_tx_dma_busy</code></td><td>USART6 TX DMA 是否被占用</td><td><code>SendDma()</code></td><td>启动前写1；确认 USART TC 或超时、DMA错误后写0</td></tr>
-    <tr><td><code>usart6_tx_dma_result</code></td><td>本次 DMA 结果：0未完成，1成功，-1失败</td><td>启动时写0；TX中断写1或-1</td><td>任务醒来后读取</td></tr>
-    <tr><td><code>usart6_tx_dma_wait_task</code></td><td>本次需要唤醒的任务句柄</td><td><code>SendDma()</code>写入，中断清零</td><td>中断用它调用 <code>vTaskNotifyGiveFromISR()</code></td></tr>
-    <tr><td>任务通知计数</td><td>保存在该任务控制块中的完成信号</td><td>中断加1，<code>ulTaskNotifyTake()</code>取走</td><td>中断可以早于等待语句发生，计数会保留到任务读取</td></tr>
-    <tr><td><code>NDTR</code></td><td>本次还要搬运的字节数</td><td>每次发送时装入 <code>len</code>，DMA硬件递减</td><td>减到0后产生 DMA TC，普通模式停止 Stream</td></tr>
+  <h2>2. 一个元素是一个槽</h2>
+  <div class="code">typedef struct {
+    uint8_t data[68];
+    uint16_t len;
+    uint8_t state;
+} USART6_TxSlot;
+
+static USART6_TxSlot usart6_tx_slot[2];</div>
+  <p><code>slot[0]</code> 和 <code>slot[1]</code> 各是一槽。<code>data[68]</code> 是这一槽里面的字节，下标到 67 为止。短帧只发送 <code>len</code> 个字节。</p>
+  <p><code>wr</code> 指向下一个空槽，<code>rd</code> 指向 DMA 正在读的槽。两个槽共用这一对下标。</p>
+  <table><thead><tr><th>状态</th><th>含义</th></tr></thead><tbody>
+    <tr><td><code>EMPTY</code></td><td>可以领取</td></tr>
+    <tr><td><code>FILL</code></td><td>调用者正在写入，DMA 不读</td></tr>
+    <tr><td><code>READY</code></td><td>帧已组完，等待启动</td></tr>
+    <tr><td><code>SEND</code></td><td>DMA 正在读</td></tr>
   </tbody></table>
 </section>
 <section>
-  <h2>3. 初始化一次，发送时重复启动</h2>
-  <p><code>USART6_LL_TxDmaInit()</code>在 <code>USART6_LL_Init()</code> 中执行一次。它打开 DMA2 时钟，选择 Stream6 Channel5，方向设为内存到外设，外设地址固定为 <code>USART6-&gt;DR</code>，内存地址递增，数据宽度为字节，模式为普通模式，并打开 TC、TE、DME 中断。</p>
-  <p>普通模式发完一帧后 EN 自动清零。下一帧长度和数组地址都可能不同，所以每次 <code>USART6_LL_SendDma()</code> 重新执行：</p>
-  <div class="code">USART6_LL_TxDmaClearFlags();
-LL_DMA_SetMemoryAddress(DMA2, LL_DMA_STREAM_6, (uint32_t)data);
-LL_DMA_SetDataLength(DMA2, LL_DMA_STREAM_6, len);
-LL_DMA_EnableStream(DMA2, LL_DMA_STREAM_6);</div>
-  <p><code>EnableStream()</code>后 DMA 硬件开始工作，CPU 继续执行后面的超时计算。任务执行到 <code>ulTaskNotifyTake()</code> 时才进入阻塞；这时 DMA 仍在发送。若 DMA 在任务到达等待语句前已经完成，中断先把通知计数加1，等待语句发现计数存在后立即返回。</p>
+  <h2>3. 领取和提交</h2>
+  <p><code>USART6_LL_TxAlloc()</code> 取走 <code>slot[wr]</code>，把状态改成 <code>FILL</code>，再让 <code>wr</code> 前进。两个槽都不是 <code>EMPTY</code> 时，任务停在计数信号量上，直到完成中断归还一个槽。</p>
+  <p><code>USART6_Packet_Send()</code> 在返回的 <code>data[]</code> 里写完协议帧，调用 <code>USART6_LL_TxCommit()</code>。提交把状态改成 <code>READY</code>。DMA 正空闲，并且 <code>slot[rd]</code> 已经是 <code>READY</code>，就设置地址和 <code>NDTR</code> 并打开 Stream6。</p>
 </section>
 <section>
-  <h2>4. 临界区与 busy</h2>
-  <p>临界区包住“检查 busy、写 busy、设置地址和长度、启动 Stream”这一段。两个任务不能同时看到 <code>busy == 0</code> 并同时改 Stream6。</p>
-  <p>退出临界区时本次配置已经写完，<code>busy</code>已经是1。其他任务可以运行，但再次调用 <code>SendDma()</code> 会因 <code>busy == 1</code> 返回0，不能改本次地址和 NDTR。<code>printf</code>也会先等 <code>busy</code> 清零，避免它的字节插入 DMA 数据中间。</p>
-  <p>TX中断优先级为5，临界区内它暂时不能运行。配置完成后必须退出临界区，完成中断才能调用 FreeRTOS 的 FromISR 接口。</p>
+  <h2>4. 完成中断</h2>
+  <p><code>DMA2_Stream6_IRQHandler()</code> 调用 <code>USART6_LL_DmaTxIRQHandler()</code>。优先级是 5。</p>
+  <p>它把当前槽改回 <code>EMPTY</code>，<code>rd</code> 前进，并用 <code>xSemaphoreGiveFromISR()</code> 归还这个槽。下一槽若是 <code>READY</code>，同一个中断里再开 Stream6。TE 或 DME 也释放当前槽，不重发。</p>
+  <p>启动信息和 <code>printf</code> 仍走 <code>USART6_LL_Send()</code> / <code>fputc()</code>。<code>busy</code> 为 1 时先等待。最后一个槽的 DMA 结束后，轮询发送先等 USART TC，再写 DR。</p>
 </section>
-<section>
-  <h2>5. 通知的发送与接收</h2>
-  <div class="grid">
-    <div class="card blue"><h3>任务接收</h3><p>第161行 <code>ulTaskNotifyTake(pdTRUE, 0)</code> 清除上一笔残留计数，等待时间为0，不阻塞。</p><p>第191行 <code>ulTaskNotifyTake(pdTRUE, timeout_ticks)</code> 读取本次计数；计数为0时任务进入 Blocked。</p></div>
-    <div class="card green"><h3>中断发送</h3><p><code>DMA2_Stream6_IRQHandler()</code>调用 <code>USART6_LL_DmaTxIRQHandler()</code>。</p><p>TC时 <code>result = 1</code>；TE或DME时 <code>result = -1</code>。随后 <code>vTaskNotifyGiveFromISR(wait_task)</code> 把该任务的通知计数加1。</p></div>
-  </div>
-  <p><code>xTaskGetCurrentTaskHandle()</code>返回的是正在执行 <code>SendDma()</code> 的任务。当前调用链来自 <code>USART6_AppTask()</code>，所以保存下来的就是这个任务。</p>
-</section>
-<section>
-  <h2>6. 超时时间</h2>
-  <p>115200、8N1每个字节占10位。代码先把线路时间向上取整为毫秒，再加10ms余量：</p>
-  <div class="code">timeout_ms = (len * 10 * 1000 + 115199) / 115200;
-timeout_ms += 10;</div>
-  <p>6字节约0.52ms，向上取整为1ms，加余量后等待11ms。68字节最长帧约5.9ms，加余量后等待16ms。1ms一个FreeRTOS节拍，所以等待节拍数与毫秒数相同。</p>
-  <p><code>ulTaskNotifyTake()</code>返回0表示等待时间内没有收到通知。任务从这一行继续执行，先停止 Stream6、调用 <code>USART6_LL_TxDmaClearFlags()</code>、清除等待任务和 <code>busy</code>，然后本次发送返回0。它不会从任务函数开头重新运行。</p>
-</section>
-<section>
-  <h2>7. 两种完成标志</h2>
-  <table><thead><tr><th>标志</th><th>置位含义</th><th>当前处理</th></tr></thead><tbody>
-    <tr><td>DMA TC</td><td>最后一个字节已经写入 <code>USART6-&gt;DR</code></td><td>Stream6中断记录成功并发出任务通知</td></tr>
-    <tr><td>USART TC</td><td>移位寄存器空，最后一个停止位已从PC6发出</td><td>任务醒来后轮询该标志，然后清除 <code>busy</code></td></tr>
-    <tr><td>TXE</td><td>DR为空，可以接收下一个字节</td><td>USART硬件自动置1；DMA或CPU写入DR后硬件清零</td></tr>
-  </tbody></table>
-  <p>TXE循环由硬件控制：DR空时TXE为1，USART向DMA发出请求；DMA写入一字节后TXE清零；该字节进入移位寄存器后TXE再次为1。</p>
-</section>
-<section>
-  <h2>8. 标志清理函数</h2>
-  <p><code>USART6_LL_TxDmaClearFlags()</code>统一清除 Stream6 的 TC、TE、DME、FE。TX未使用半传输，所以函数不处理 HT。四个调用点的目的不同：</p>
-  <ol class="steps">
-    <li>初始化时清除上电残留状态。</li>
-    <li>每次启动前清除上一笔残留，避免旧TC让新传输立即被当成完成。</li>
-    <li>完成中断里应答本次事件，避免中断返回后立刻再次进入。</li>
-    <li>超时停止 Stream 后清除本次残留，让下一次发送从干净状态开始。</li>
-  </ol>
-</section>
-<section>
-  <h2>9. 发送缓冲区是临时变量</h2>
-  <p><code>frame[68]</code>是 <code>USART6_Packet_Send()</code> 的临时数组，没有单独的发送队列。DMA 直接读它，所以函数必须等到发送结束再返回。以后如果调用方要马上返回，再改成持久缓冲区。</p>
-</section>
-<footer>当前源码：DMA接收 + DMA数据包发送 + 启动信息轮询发送</footer>
+<footer>当前源码：两个发送槽 + DMA 接收 + 启动信息轮询发送。槽的下标、信号量和 printf 见 <a href="06_usart6_双槽发送.html">教程 6</a>。双槽发送尚未重新编译，也没有上板。</footer>
 </main></body></html>

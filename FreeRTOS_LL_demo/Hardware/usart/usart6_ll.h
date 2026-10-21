@@ -18,10 +18,15 @@ extern "C" {
 /* GPIO、USART6、RX Stream1、TX Stream6和中断初始化。 */
 void USART6_LL_Init(void);
 
-/* 轮询发送用于启动信息；DMA发送用于调度器启动后的任务。 */
+/* 轮询发送用于启动信息和printf。 */
 void USART6_LL_SendByte(uint8_t data);
 void USART6_LL_Send(const uint8_t *data, uint16_t len);
-int USART6_LL_SendDma(const uint8_t *data, uint16_t len);
+
+/* 两个槽，每个槽最多保存一帧原始字节。 */
+#define USART6_TX_SLOT_NUM   2U
+#define USART6_TX_SLOT_SIZE  68U
+uint8_t *USART6_LL_TxAlloc(uint16_t *slot_id);
+void USART6_LL_TxCommit(uint16_t slot_id, uint16_t len);
 
 /*
  * 软件接收队列接口。

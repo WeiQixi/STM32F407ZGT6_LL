@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>USART6 教程 6：两个发送槽</title><link rel="stylesheet" href="usart6_driver.css">
+</head>
+<body>
+<header><div class="wrap">
+  <h1>USART6 教程 6：两个发送槽</h1>
+  <p>按源码把一次发送走完：<code>USART6_Packet_Send()</code> 组帧，<code>USART6_LL_TxAlloc()</code> 领槽，<code>USART6_LL_TxCommit()</code> 提交，<code>USART6_LL_TxKick()</code> 打开 DMA，完成中断再换下一个槽。</p>
+  <div class="badges"><span class="badge">Packet_Send</span><span class="badge">TxAlloc / TxCommit</span><span class="badge">TxKick</span><span class="badge">Stream6 完成中断</span></div>
+</div></header>
+<nav><div class="wrap"><a href="01_usart6_初始化.html">1 初始化</a><a href="02_usart6_无DMA收发.html">2 无DMA收发</a><a href="03_usart6_DMA初始化.html">3 DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">4 DMA接收</a><a href="05_usart6_DMA发送.html">5 DMA发送</a><a class="current" href="06_usart6_双槽发送.html">6 两个槽</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
+<main>
+<section>
+  <h2>1. 一次发送先经过哪些函数</h2>
+  <div class="path"><div class="node"><strong>组帧</strong><code>USART6_Packet_Send()</code></div><div class="arrow">→</div><div class="node"><strong>领槽</strong><code>USART6_LL_TxAlloc()</code></div><div class="arrow">→</div><div class="node"><strong>提交</strong><code>USART6_LL_TxCommit()</code></div><div class="arrow">→</div><div class="node"><strong>启动</strong><code>USART6_LL_TxKick()</code></div><div class="arrow">→</div><div class="node"><strong>完成</strong><code>USART6_LL_DmaTxIRQHandler()</code></div></div>
+  <p>协议字节由 <code>USART6_Packet_Send()</code> 写入槽的 <code>data[]</code>。<code>usart6_ll.c</code> 只按地址和长度把这块内存交给 DMA2 Stream6。回显任务在 <code>USART6_Packet_Read()</code> 取出一帧 DATA 之后，调用 <code>USART6_Packet_Send(payload, length)</code>。</p>
+  <p>槽是静态数组 <code>usart6_tx_slot[2]</code>。每个元素里有 <code>data[68]</code>、<code>len</code> 和 <code>state</code>。68 是这一槽最多能装的字节数，DMA 实际搬走的个数是提交时写下的 <code>len</code>。</p>
+</section>
+<section>
+  <h2>2. Packet_Send：把 Hi 写成 6 个字节</h2>
+  <p>调用 <code>USART6_Packet_Send("Hi", 2)</code> 时，函数先看参数。载荷指针是空并且长度不是 0，或者长度大于 64，函数直接返回，不领槽。</p>
+  <div class="code">frame = USART6_LL_TxAlloc(&amp;slot_id);
+if(frame == 0) return;</div>
+  <p><code>frame</code> 指向领到的那一槽的 <code>data[0]</code>。<code>slot_id</code> 被写成 0 或 1。返回 0 表示这次没有槽，后面的写入和提交都不执行。</p>
+  <p><code>frame_pos</code> 从 0 开始。后置加加先写入当前下标，再把下标加 1。载荷 <code>48 69</code> 走完时，槽里是：</p>
+  <table><thead><tr><th>执行的语句</th><th>写入</th><th>写完后的 frame_pos</th></tr></thead><tbody>
+    <tr><td><code>frame[frame_pos++] = 0xAA</code></td><td><code>data[0] = AA</code></td><td>1</td></tr>
+    <tr><td><code>frame[frame_pos++] = 0x55</code></td><td><code>data[1] = 55</code></td><td>2</td></tr>
+    <tr><td><code>frame[frame_pos++] = 2</code></td><td><code>data[2] = 02</code></td><td>3</td></tr>
+    <tr><td><code>frame[frame_pos++] = payload[0]</code></td><td><code>data[3] = 48</code>，同时 <code>value = 02 ^ 48</code></td><td>4</td></tr>
+    <tr><td><code>frame[frame_pos++] = payload[1]</code></td><td><code>data[4] = 69</code>，同时 <code>value = 02 ^ 48 ^ 69 = 23</code></td><td>5</td></tr>
+    <tr><td><code>frame[frame_pos++] = value</code></td><td><code>data[5] = 23</code></td><td>6</td></tr>
+  </tbody></table>
+  <p>循环用 <code>payload[index]</code> 填 DATA，并用同一个 <code>value</code> 做异或。<code>value</code> 的初值是长度字节 <code>02</code>，所以校验盖住的是 <code>LEN</code> 和 DATA，不包括 <code>AA 55</code>。</p>
+  <div class="code">USART6_LL_TxCommit(slot_id, frame_pos);</div>
+  <p>这里的 <code>frame_pos</code> 已经是 6。提交的长度是整帧字节数，包括包头和校验。空包 <code>AA 55 00 00</code> 提交的长度是 4。最长 DATA 为 64 时，提交的长度是 68。</p>
+  <p>回显区里连续出现的 <code>AA 55 02 48 69 23</code>，是这个函数被调用了很多次。每一次 <code>USART6_Packet_Read()</code> 只取走队列里的 6 个字节，把 DATA 长度 2 交给任务，任务再调用一次 <code>USART6_Packet_Send()</code>。64 限制的是这一次参数 <code>len</code>，也就是 DATA 的字节数。</p>
+</section>
+<section>
+  <h2>3. TxAlloc：决定这次用哪一个槽</h2>
+  <p>函数开头有三道关，任何一道失败都返回 <code>NULL</code>，槽的状态和下标都不变。</p>
+  <ol class="steps">
+    <li><code>slot_id == NULL</code> 或信号量句柄还是 <code>NULL</code>。这里的 <code>NULL</code> 表示没有传入槽号的地址，或者 <code>USART6_LL_TxFreeInit()</code> 还没创建信号量。</li>
+    <li>调度器还没运行。启动打印发生在 <code>vTaskStartScheduler()</code> 之前，不能在这里领槽。</li>
+    <li><code>xSemaphoreTake(usart6_tx_free, portMAX_DELAY)</code> 没有返回 <code>pdTRUE</code>。</li>
+  </ol>
+  <p>信号量创建时计数是 2。前两次 Take 把计数减到 1、再减到 0，函数继续往下走。第三次 Take 时计数已经是 0，这个任务停在 Take 里面，直到完成中断执行 <code>xSemaphoreGiveFromISR()</code>。停住的是这一个任务，调度器可以去运行别的任务。正常醒来时 Take 返回 <code>pdTRUE</code>，不会走到 <code>return NULL</code>。</p>
+  <p>通过 Take 之后进入临界区：</p>
+  <div class="code">id = usart6_tx_wr;
+if(usart6_tx_slot[id].state != USART6_TX_EMPTY){
+    taskEXIT_CRITICAL();
+    xSemaphoreGive(usart6_tx_free);
+    return NULL;
+}
+usart6_tx_slot[id].state = USART6_TX_FILL;
+usart6_tx_slot[id].len = 0U;
+usart6_tx_wr = (usart6_tx_wr + 1U) % 2;
+taskEXIT_CRITICAL();
+*slot_id = id;
+return usart6_tx_slot[id].data;</div>
+  <p><code>id = usart6_tx_wr</code> 记下这次要领的槽号。上电后 <code>wr</code> 是 0，第一次领到槽 0。状态若已经不是 <code>EMPTY</code>，先退出临界区，再把刚才减掉的信号量加回去，返回 <code>NULL</code>。<code>wr</code> 保持不动。</p>
+  <p>状态是 <code>EMPTY</code> 时，改成 <code>FILL</code>，长度先写成 0。DMA 看到 <code>FILL</code> 不会读这块内存。然后 <code>wr</code> 加 1 再对 2 取余：0 变成 1，1 变成 0。这是下一次领取要用的槽号。临界区结束后，把槽号写到调用者的 <code>slot_id</code>，返回 <code>data</code> 的地址。此时字节还没写，写入发生在回到 <code>USART6_Packet_Send()</code> 之后。</p>
+</section>
+<section>
+  <h2>4. TxCommit：长度写入之后才允许 DMA 来取</h2>
+  <div class="code">if((slot_id &gt;= 2) || (len == 0) || (len &gt; 68)) return;
+
+taskENTER_CRITICAL();
+if(usart6_tx_slot[slot_id].state != USART6_TX_FILL){
+    taskEXIT_CRITICAL();
+    return;
+}
+usart6_tx_slot[slot_id].len = len;
+usart6_tx_slot[slot_id].state = USART6_TX_READY;
+USART6_LL_TxKick();
+taskEXIT_CRITICAL();</div>
+  <p>槽号越界、长度为 0 或长度大于 68，函数在进临界区之前返回。当前 <code>USART6_Packet_Send()</code> 传来的 <code>frame_pos</code> 是 4 到 68，这三句判断都不会成立。</p>
+  <p>进临界区后，槽必须正处在 <code>FILL</code>。不是 <code>FILL</code> 就退出临界区并返回，信号量计数不加。是 <code>FILL</code> 时，先把实际字节数写进 <code>len</code>，再把状态改成 <code>READY</code>，然后调用 <code>USART6_LL_TxKick()</code>。调用 <code>TxKick()</code> 时，临界区还没退出。</p>
+</section>
+<section>
+  <h2>5. TxKick：只有 rd 那一槽就绪才开 Stream6</h2>
+  <p>初始化时 <code>USART6_LL_TxDmaInit()</code> 已经把 Stream6 配成内存到外设、普通模式、Channel5，外设地址固定是 <code>USART6-&gt;DR</code>。每次真正发送前，<code>TxKick()</code> 再改这一次的内存地址和 <code>NDTR</code>。</p>
+  <div class="code">if(usart6_tx_dma_busy != 0U) return;
+if(usart6_tx_slot[usart6_tx_rd].state != USART6_TX_READY) return;</div>
+  <p>这两句返回时，<code>TxCommit()</code> 已经把本次槽号的状态改成了 <code>READY</code>，长度也在。返回只表示现在不能开 DMA。第一句是因为 Stream6 正在读另一个槽。第二句看的是 <code>rd</code>，不一定是刚提交的那个槽号。例如刚把槽 1 改成 <code>READY</code>，而 <code>rd</code> 还停在槽 0，槽 0 仍是 <code>FILL</code>，函数就从第二句返回。槽 1 的 6 个字节留在 <code>data[]</code> 里。</p>
+  <p>两句都不成立时，按这个顺序启动：</p>
+  <ol class="steps">
+    <li><code>slot[rd]</code> 改为 <code>SEND</code>，<code>usart6_tx_dma_busy = 1</code>，<code>usart6_tx_need_tc = 0</code>。新的一帧已经开始，<code>printf</code> 不必再为上一帧等停止位。</li>
+    <li>关闭 Stream6，并等到 <code>EN</code> 硬件位变成 0。普通模式在上次传完时硬件会清 <code>EN</code>，这里仍先确认停止，再改地址和长度。</li>
+    <li>清掉 TC、TE、DME、FE。发送没有开半传输中断，所以不清 HT。</li>
+    <li>内存地址设为 <code>slot[rd].data</code>，<code>NDTR</code> 设为 <code>slot[rd].len</code>。Hi 这一帧的 <code>NDTR</code> 是 6。</li>
+    <li>打开 Stream6。DMA 按字节把 <code>data[]</code> 写入 <code>USART6-&gt;DR</code>，USART 从 PC6 移位送出。</li>
+  </ol>
+</section>
+<section>
+  <h2>6. 完成中断：释放当前槽，再看下一槽</h2>
+  <p><code>DMA2_Stream6_IRQHandler()</code> 进入 <code>USART6_LL_DmaTxIRQHandler()</code>。这条中断优先级是 5，可以调用 <code>xSemaphoreGiveFromISR()</code>。</p>
+  <div class="code">has_event = TE 或 DME 或 TC 有一个成立;
+USART6_LL_TxDmaClearFlags();
+if(has_event == 0) return;</div>
+  <p>标志先清掉。三个事件都没有，函数返回，不改槽，也不 Give。TE、DME 和 TC 走同一段后续代码，出错的帧不重发。</p>
+  <div class="code">saved = taskENTER_CRITICAL_FROM_ISR();
+if(usart6_tx_slot[usart6_tx_rd].state != USART6_TX_SEND){
+    taskEXIT_CRITICAL_FROM_ISR(saved);
+    return;
+}
+usart6_tx_slot[usart6_tx_rd].state = USART6_TX_EMPTY;
+usart6_tx_slot[usart6_tx_rd].len = 0;
+usart6_tx_rd = (usart6_tx_rd + 1) % 2;
+usart6_tx_dma_busy = 0;
+if(usart6_tx_slot[usart6_tx_rd].state == USART6_TX_READY)
+    USART6_LL_TxKick();
+else
+    usart6_tx_need_tc = 1;
+taskEXIT_CRITICAL_FROM_ISR(saved);</div>
+  <p><code>rd</code> 指向的槽必须是 <code>SEND</code>。不是 <code>SEND</code> 就退出临界区并返回，信号量不加。这避免一次多余的中断把空槽再释放一遍。</p>
+  <p>是 <code>SEND</code> 时，这个槽改回 <code>EMPTY</code>，长度清 0，<code>rd</code> 前进一格，<code>busy</code> 先清 0。接着看新的 <code>rd</code>：</p>
+  <ul>
+    <li>新槽已是 <code>READY</code>：立刻再调用 <code>TxKick()</code>。它把新槽改成 <code>SEND</code>，并把 <code>busy</code> 设回 1。两个槽就这样接上，中间不用等任务再提交一次。</li>
+    <li>新槽不是 <code>READY</code>：没有下一帧可发，<code>need_tc</code> 设为 1。DMA 的 TC 只说明内存里的字节已经写入 <code>DR</code>，最后一个字节的停止位可能还在 PC6 上移出。<code>printf</code> 随后写 DR 之前要先看到 USART 的 TC。</li>
+  </ul>
+  <div class="code">xSemaphoreGiveFromISR(usart6_tx_free, &amp;higher_priority_task_woken);
+portYIELD_FROM_ISR(higher_priority_task_woken);</div>
+  <p>Give 加的是刚释放的那一个槽。正在被 <code>TxKick()</code> 接上的下一槽，计数早在它领取时减过，这里不再减。若有任务停在 Take 上，并且它的优先级更高，<code>portYIELD_FROM_ISR()</code> 让它尽快继续领槽。</p>
+</section>
+<section>
+  <h2>7. 两个任务按函数走一遍</h2>
+  <p>开始时两个槽都是 <code>EMPTY</code>，<code>wr = 0</code>，<code>rd = 0</code>，<code>busy = 0</code>，信号量计数是 2。任务 A、任务 B 各发一帧，A 先领槽但后写完。</p>
+  <table><thead><tr><th>执行到</th><th>槽 0</th><th>槽 1</th><th>wr</th><th>rd</th><th>busy</th><th>信号量</th></tr></thead><tbody>
+    <tr><td>初始</td><td>EMPTY</td><td>EMPTY</td><td>0</td><td>0</td><td>0</td><td>2</td></tr>
+    <tr><td>A 从 <code>TxAlloc()</code> 返回</td><td>FILL</td><td>EMPTY</td><td>1</td><td>0</td><td>0</td><td>1</td></tr>
+    <tr><td>B 从 <code>TxAlloc()</code> 返回</td><td>FILL</td><td>FILL</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+    <tr><td>B 写完并 <code>TxCommit(1, len)</code>。<code>TxKick()</code> 看到槽 0 仍是 FILL，返回</td><td>FILL</td><td>READY</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+    <tr><td>A 写完并 <code>TxCommit(0, len)</code>。<code>TxKick()</code> 打开 Stream6</td><td>SEND</td><td>READY</td><td>0</td><td>0</td><td>1</td><td>0</td></tr>
+    <tr><td>槽 0 的完成中断。槽 1 已是 READY，中断里再 <code>TxKick()</code>，然后 Give</td><td>EMPTY</td><td>SEND</td><td>0</td><td>1</td><td>1</td><td>1</td></tr>
+    <tr><td>槽 1 的完成中断。槽 0 是 EMPTY，置 <code>need_tc = 1</code>，再 Give</td><td>EMPTY</td><td>EMPTY</td><td>0</td><td>0</td><td>0</td><td>2</td></tr>
+  </tbody></table>
+  <p>B 提交之后到 A 提交之前，槽 1 的字节已经在 <code>data[]</code> 里，只是 <code>rd</code> 还没轮到它。第三个任务若在信号量为 0 时调用 <code>USART6_Packet_Send()</code>，会停在 <code>TxAlloc()</code> 的 Take 上。槽 0 的完成中断把计数加到 1 之后，它才能领走此时已经是 <code>EMPTY</code> 的槽 0。</p>
+</section>
+<section>
+  <h2>8. SendByte：在两帧 DMA 之间写入一个字节</h2>
+  <p><code>printf</code> 每个字符调用一次 <code>fputc()</code>，<code>fputc()</code> 再调用 <code>USART6_LL_SendByte()</code>。一次调用只处理参数里的那一个字节。</p>
+  <p>调度器未运行时，函数等到 TXE 置位，把字节写入 DR，然后返回。这一段不看槽，也不看 <code>busy</code>。</p>
+  <p>调度器运行后进入 <code>for(;;)</code>：</p>
+  <ol class="steps">
+    <li><code>while(usart6_tx_dma_busy != 0)</code> 空等。DMA 正在搬某一槽时，这个字节不能写进 DR，否则会插进那一帧中间。<code>busy</code> 为 1 就等，另一个槽是空的也等。这里是空等，任务不会像 Take 那样睡下去。</li>
+    <li><code>need_tc</code> 为 1 时，再空等到 USART 的 TC。这是上一小节最后一帧结束时留下的标志，用来等最后一个停止位离开 PC6。</li>
+    <li>进入临界区，再读一次 <code>busy</code>。等 TC 的时候，别的任务可能已经 <code>TxCommit()</code> 并且把 <code>busy</code> 设成了 1。</li>
+    <li><code>busy</code> 仍是 0：清掉 <code>need_tc</code>，等到 TXE，把本次的这一个字节写入 DR，退出临界区，<code>return</code>。这个字符发送结束。</li>
+    <li><code>busy</code> 已经是 1：退出临界区。函数末尾的循环括号回到第 1 步，继续等 DMA。源码里没有写 <code>continue</code>，回到循环开头靠的是 <code>for(;;)</code> 自己的结尾。</li>
+  </ol>
+  <p>一个字符从 <code>SendByte()</code> 返回后，调度器可以切到另一个任务。那个任务能够把一整帧领槽、写完、提交。所以一串 <code>printf</code> 的两个字符之间，线上可以先出去一整帧 <code>AA 55 ...</code>。临界区只包住一次读 <code>busy</code>、等 TXE 和写 DR。</p>
+  <p><code>USART6_LL_Send()</code> 对数组里的每个字节调用一次 <code>SendByte()</code>，全部返回后再等一次 USART TC。启动信息使用这个函数。</p>
+  <div class="callout warn">完成中断负责把 <code>busy</code> 清 0。调用 <code>SendByte()</code> 的代码若停在把优先级 5 挡住的临界区里，或者直接停在 Stream6 的中断函数里，完成中断进不来，<code>while(busy)</code> 就一直等下去。</div>
+</section>
+<footer>双槽发送的代码已写入工程，尚未重新编译，也没有上板。TE 或 DME 与 TC 一样释放当前槽，该帧不重发。</footer>
+</main></body></html>

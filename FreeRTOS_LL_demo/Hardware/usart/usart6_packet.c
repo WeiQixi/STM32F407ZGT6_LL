@@ -4,10 +4,15 @@
  *
  * 协议格式：AA 55 | LEN | DATA... | XOR。
  * 本模块使用底层字节队列，不直接配置GPIO、USART或DMA。
+ * 发送时向底层领取一个槽，把协议帧写进槽里。
  */
 #include "usart6_packet.h"
 #include "usart6_ll.h"
 #include "stm32f4xx_hal.h"
+
+#if (USART6_PKT_HDR_LEN + USART6_PKT_LEN_MAX + 1U) > USART6_TX_SLOT_SIZE
+#error "USART6 packet frame does not fit in a TX slot"
+#endif
 
 /* 半包状态：wait表示正在等待剩余字节，t0保存开始等待的毫秒时间。 */
 static uint8_t usart6_packet_wait;
@@ -42,16 +47,20 @@ static uint8_t USART6_Packet_CalcXor(uint8_t len, uint16_t data_offset){
  * @param payload DATA数组；len为0时允许为NULL。
  * @param len DATA字节数，最大为USART6_PKT_LEN_MAX。
  *
- * 参数无效时不发送；先在局部数组中组帧，再交给底层统一发送。
+ * 参数无效时不发送。协议帧写入底层空槽；两个槽都占用时在领取槽时等待。
  */
 void USART6_Packet_Send(const uint8_t *payload, uint16_t len){
-    uint8_t frame[USART6_PKT_HDR_LEN + USART6_PKT_LEN_MAX + 1U];
+    uint8_t *frame;
+    uint16_t slot_id;
     uint8_t value;
     uint16_t index;
     uint16_t frame_pos = 0U;
 
     /* 空包允许payload为NULL；非空包必须有DATA，LEN不能超过协议上限。 */
     if((payload == 0 && len != 0U) || (len > USART6_PKT_LEN_MAX)) return;
+
+    frame = USART6_LL_TxAlloc(&slot_id);
+    if(frame == 0) return;
 
     /* 依次写入包头和LEN；frame_pos始终指向下一个可写位置。 */
     frame[frame_pos++] = USART6_PKT_SOF0;
@@ -66,13 +75,8 @@ void USART6_Packet_Send(const uint8_t *payload, uint16_t len){
         frame[frame_pos++] = payload[index];
         value ^= payload[index];
     }
-
-    /*
-     * XOR放在帧尾，再由TX DMA发送完整帧。USART6_LL_SendDma()会阻塞
-     * 当前任务直到DMA读完frame，所以局部数组在传输期间始终有效。
-     */
     frame[frame_pos++] = value;
-    (void)USART6_LL_SendDma(frame, frame_pos);
+    USART6_LL_TxCommit(slot_id, frame_pos);
 }
 
 /**
