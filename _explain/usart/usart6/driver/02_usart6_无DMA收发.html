@@ -2,27 +2,27 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>USART6 教程 2：无DMA收发</title><link rel="stylesheet" href="usart6_driver.css">
+  <title>USART6：不用 DMA 时 CPU 怎样收发</title><link rel="stylesheet" href="usart6_driver.css">
 </head>
 <body>
 <header><div class="wrap">
-  <h1>USART6 教程 2：无DMA收发</h1>
-  <p>接收由RXNE中断读取DR，发送由CPU轮询TXE和TC。该实现对应 <code>usart-elementary-ring</code> 分支。</p>
-  <div class="badges"><span class="badge">RXNE中断接收</span><span class="badge">软件环形队列</span><span class="badge">TXE/TC轮询发送</span><span class="badge">无DMA</span></div>
+  <h1>不用 DMA 时，CPU 自己读写 DR</h1>
+  <p>这一页只解释三个词：TXE、软件队列、来不及读。当前工程的接收不走这里，初始化写完后先看 <a href="03_usart6_DMA初始化.html">DMA初始化</a>。</p>
+  <div class="badges"><span class="badge">TXE：发送寄存器空了</span><span class="badge">软件队列 256 字节</span><span class="badge">来不及读会丢字节</span></div>
 </div></header>
-<nav><div class="wrap"><a href="01_usart6_初始化.html">1 初始化</a><a class="current" href="02_usart6_无DMA收发.html">2 无DMA收发</a><a href="03_usart6_DMA初始化.html">3 DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">4 DMA接收</a><a href="05_usart6_DMA发送.html">5 DMA发送</a><a href="06_usart6_双槽发送.html">6 两个槽</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
+<nav><div class="wrap"><a href="01_usart6_初始化.html">1 初始化</a><a href="03_usart6_DMA初始化.html">DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">DMA接收</a><a href="05_usart6_DMA发送.html">DMA发送</a><a href="06_usart6_双槽发送.html">两个槽</a><a class="current" href="02_usart6_无DMA收发.html">不用DMA</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
 <main>
 <section>
-  <h2>1. 无DMA收发的数据路径</h2>
+  <h2>1. CPU 自己搬字节时，数据怎么走</h2>
   <div class="grid">
     <div class="card blue"><h3>接收路径</h3><p>PC7 → USART6移位寄存器 → DR → RXNE中断 → CPU读取DR → 软件环形队列。</p></div>
     <div class="card green"><h3>发送路径</h3><p>CPU等待TXE → CPU写DR → USART6移位发送 → 最后等待TC。</p></div>
   </div>
-  <p>“无DMA”表示每个接收字节和发送字节都由CPU显式读写USART6的数据寄存器。USART硬件仍负责起始位、数据位、停止位和波特率时序。</p>
+  <p>不用 DMA 时，每收到一个字节，CPU 进一次中断，自己从 DR 把字节读走；要发送时，CPU 自己把字节写进 DR。线上的起始位、数据位、停止位仍由 USART 硬件产生。</p>
 </section>
 <section>
   <h2>2. RXNE中断接收</h2>
-  <p><code>RXNE</code>是Receive Data Register Not Empty。USART6接收完一个字符并把数据放入DR后，RXNE置1；RXNE中断使CPU进入 <code>USART6_IRQHandler()</code>。</p>
+  <p><code>RXNE</code> 表示接收寄存器里已经有一个字节，CPU 该来读了。USART6 收完一个字节、放进 DR 之后，RXNE 变成 1，CPU 进入 <code>USART6_IRQHandler()</code>。</p>
   <ol class="steps">
     <li>初始化阶段配置USART6_IRQn优先级并在NVIC中启用该中断。</li>
     <li>调用 <code>LL_USART_EnableIT_RXNE(USART6)</code>，允许RXNE事件提出中断请求。</li>
@@ -42,7 +42,7 @@
   <table><thead><tr><th>变量</th><th>含义</th><th>修改者</th></tr></thead><tbody>
     <tr><td><code>usart6_rx_buf[]</code></td><td>保存已由CPU从DR取出、尚待任务处理的字节</td><td>中断写入，任务读取</td></tr>
     <tr><td><code>usart6_rx_head</code></td><td>下一次写入位置</td><td><code>RxPush()</code></td></tr>
-    <tr><td><code>usart6_rx_tail</code></td><td>第一条未消费数据的位置</td><td><code>ReadByte()</code></td></tr>
+    <tr><td><code>usart6_rx_tail</code></td><td>第一条还没被任务取走的字节</td><td><code>RxDrop()</code>。下面的 <code>ReadByte()</code> 也会移动它，但当前工程没有调用</td></tr>
     <tr><td><code>next</code></td><td>head前进一步后的候选位置</td><td><code>RxPush()</code>局部变量</td></tr>
   </tbody></table>
   <div class="code">next = (head + 1) % BUFFER_SIZE;
@@ -52,13 +52,26 @@ if (next == tail) {
     buf[head] = data;
     head = next;
 }</div>
-  <p>数组保留一个空位置用于区分空与满：<code>head == tail</code>表示空；<code>next == tail</code>表示满。128格数组最多保存127字节。</p>
+  <p>数组空出一格，用来区分“空”和“满”。<code>head == tail</code> 是空；再写一个就会追上 tail，这时算满，新字节丢掉。工程里的数组是 256 格，最多留下 255 个字节。</p>
+  <h3>ReadByte 是什么，现在有没有人调用</h3>
+  <div class="code">int USART6_LL_ReadByte(uint8_t *data){
+    uint16_t tail;
+    if(data == 0) return 0;
+    if(usart6_rx_head == usart6_rx_tail) return 0;
+
+    tail = usart6_rx_tail;
+    *data = usart6_rx_buf[tail];
+    usart6_rx_tail = (uint16_t)((tail + 1) &amp; USART6_RX_MASK);
+    return 1;
+}</div>
+  <p>它从软件队列取走 1 个字节。调用者要先准备一个 <code>uint8_t</code> 变量，把地址传进来。队列空，也就是 <code>head</code> 等于 <code>tail</code>，返回 0。否则把 <code>tail</code> 指着的那一格写进这个变量，<code>tail</code> 加 1，返回 1。</p>
+  <p>当前工程里只有这个函数的定义，<code>main</code>、回显任务和协议解析都没有调用它。回显任务调用 <code>USART6_Packet_Read()</code>，解析器用 <code>RxPeek</code> 查看字节，确认是一整帧之后再用 <code>RxDrop</code> 一次丢掉这一帧。<code>ReadByte</code> 和解析器共用同一个 <code>tail</code>，两边一起读会把对方的字节拿走。</p>
 </section>
 <section>
   <h2>4. TXE与TC轮询发送</h2>
   <table><thead><tr><th>标志</th><th>置位条件</th><th>发送函数的动作</th></tr></thead><tbody>
-    <tr><td>TXE</td><td>发送数据寄存器可以接收下一个字节</td><td>等待TXE后将一个字节写入DR</td></tr>
-    <tr><td>TC</td><td>DR和移位寄存器都已空，最后一个停止位已经发完</td><td>整组数据写完后等待TC再返回</td></tr>
+    <tr><td>TXE</td><td>发送数据寄存器是空的。CPU 可以把下一个要发出去的字节写进 DR</td><td>等到 TXE 为 1，再写这一字节</td></tr>
+    <tr><td>TC</td><td>写进 DR 的字节已经从 PC6 移完，最后一个停止位也离开引脚</td><td>一整段都写完后，再等 TC，然后函数才返回</td></tr>
   </tbody></table>
   <div class="code">void USART6_LL_SendByte(uint8_t data) {
     while (!LL_USART_IsActiveFlag_TXE(USART6));
@@ -67,13 +80,13 @@ if (next == tail) {
 
 for (i = 0; i &lt; len; i++) SendByte(data[i]);
 while (!LL_USART_IsActiveFlag_TC(USART6));</div>
-  <p>轮询期间CPU停留在while循环中。代码简单、时序明确，适合启动打印和短消息；长数据持续发送时会占用较多CPU时间。</p>
+  <p>等 TXE 的时候，CPU 停在 <code>while</code> 里。启动时打印一行字可以用这种写法。数据包不走这里，数据包用两个槽交给 DMA 发送。</p>
 </section>
 <section>
-  <h2>5. ORE事件与处理边界</h2>
-  <p><code>ORE</code>是Overrun Error。DR中的前一个字节仍未被CPU读取时，新字节已经接收完成，硬件置位ORE。读取SR后再读取DR可完成STM32F4规定的清除序列。</p>
-  <p>无DMA方案的接收可靠性依赖中断响应速度。长时间关中断、高优先级中断占用CPU或任务临界区过长，都会增加ORE风险。</p>
-  <div class="callout warn"><strong>代码来源范围：</strong>本页描述 <code>usart-elementary-ring</code> 分支的逐字节接收方式。当前DMA分支已经关闭RXNE逐字节接收，改由DMA读取DR。</div>
+  <h2>5. 上一字节还没读走，下一字节又到了</h2>
+  <p>DR 只有一个字节的位置。不用 DMA 时，CPU 必须在下一个字节到来之前把 DR 读走。没读走就再来一个字节，硬件放不下两个，前一个字节丢掉，同时把 ORE 置 1。ORE 就是 Overrun，意思是来不及读。</p>
+  <p>这个标志不会自己灭。按这颗芯片的要求，先读 SR，再读 DR，标志才清除。</p>
+  <p>关中断太久，CPU 就来不及进接收中断，ORE 就会出现。当前工程不用 CPU 一个字节读一次 DR。DMA 收到请求后把 DR 里的字节拷进内存，正常接收不靠这里。</p>
 </section>
-<footer>下一页：DMA2 Stream1 Channel5接收初始化</footer>
+<footer>接收 DMA 从 <a href="03_usart6_DMA初始化.html">DMA初始化</a> 看起。</footer>
 </main></body></html>

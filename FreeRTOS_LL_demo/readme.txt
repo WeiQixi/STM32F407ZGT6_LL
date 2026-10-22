@@ -88,11 +88,11 @@ FreeRTOS_LL_demo 工程说明
 	网页：
 		_explain/usart/usart1/usart1_ll_init.html
 		_explain/usart/usart6/driver/01_usart6_初始化.html
-		_explain/usart/usart6/driver/02_usart6_无DMA收发.html
 		_explain/usart/usart6/driver/03_usart6_DMA初始化.html
 		_explain/usart/usart6/driver/04_usart6_DMA接收与轮询发送.html
 		_explain/usart/usart6/driver/05_usart6_DMA发送.html
 		_explain/usart/usart6/driver/06_usart6_双槽发送.html
+		_explain/usart/usart6/driver/02_usart6_无DMA收发.html
 		_explain/usart/usart6/packet/usart6_数据包解析教程.html
 		_explain/usart/usart6/packet/usart6_数据包解析动画.html
 
@@ -114,7 +114,7 @@ FreeRTOS_LL_demo 工程说明
 	8. USB 未完成前是否仍软断开。
 
 七、下一步（按模块，不要混成一件事）
-	USART6	数据包发送改为两个静态槽。代码已接入，尚未重新编译，也没有上板。
+	USART6	数据包发送改为两个静态槽。代码已接入，并已上板测试。
 	USB	先 FIFO 和 EP0，再 OTG_FS_IRQHandler，完成前不连主机。
 	FreeRTOS	最小数据包任务和调度器已运行；后续按模块增加任务。
 
@@ -125,11 +125,11 @@ USART6 环形队列与数据包解析
 相关网页：
 	初等环形队列：_explain/usart/basic/usart_初等环形队列.html
 	USART6初始化：_explain/usart/usart6/driver/01_usart6_初始化.html
-	无DMA收发：_explain/usart/usart6/driver/02_usart6_无DMA收发.html
 	DMA初始化：_explain/usart/usart6/driver/03_usart6_DMA初始化.html
 	DMA接收与轮询发送：_explain/usart/usart6/driver/04_usart6_DMA接收与轮询发送.html
 	DMA发送：_explain/usart/usart6/driver/05_usart6_DMA发送.html
 	两个发送槽：_explain/usart/usart6/driver/06_usart6_双槽发送.html
+	无DMA收发：_explain/usart/usart6/driver/02_usart6_无DMA收发.html
 	数据包解析教程：_explain/usart/usart6/packet/usart6_数据包解析教程.html
 	交互解析动画：_explain/usart/usart6/packet/usart6_数据包解析动画.html
 
@@ -335,5 +335,5 @@ USART6 环形队列与数据包解析
 	队列满时直接丢新字节，当前没有溢出计数。
 	XOR 适合发现常见传输错误；正式协议可改用 CRC16。
 	数据包发送使用两个槽和 DMA2 Stream6。槽满时当前任务等待空槽，CPU 可运行其他任务。
-	代码未保存 DMA 错误日志，失败的帧不重发。双槽发送尚未重新编译，也没有上板。
+	代码未保存 DMA 错误日志，失败的帧不重发。双槽发送已上板测试。
 	USB 仍处于软断开状态，不连接主机测试枚举。

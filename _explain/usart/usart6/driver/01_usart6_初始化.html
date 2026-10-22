@@ -7,10 +7,10 @@
 <body>
 <header><div class="wrap">
   <h1>USART6 教程 1：初始化</h1>
-  <p>建立PC6、PC7、USART6和115200 8N1的基础配置。本页只讲串口外设本身，DMA在第三页单独说明。</p>
+  <p>建立 PC6、PC7、USART6 和 115200 8N1 的基础配置。本页只讲串口外设本身。下一页配置接收 DMA。</p>
   <div class="badges"><span class="badge">STM32F407ZGT6</span><span class="badge">PC6 TX / PC7 RX</span><span class="badge">AF8</span><span class="badge">115200 8N1</span></div>
 </div></header>
-<nav><div class="wrap"><a class="current" href="01_usart6_初始化.html">1 初始化</a><a href="02_usart6_无DMA收发.html">2 无DMA收发</a><a href="03_usart6_DMA初始化.html">3 DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">4 DMA接收</a><a href="05_usart6_DMA发送.html">5 DMA发送</a><a href="06_usart6_双槽发送.html">6 两个槽</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
+<nav><div class="wrap"><a class="current" href="01_usart6_初始化.html">1 初始化</a><a href="03_usart6_DMA初始化.html">DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">DMA接收</a><a href="05_usart6_DMA发送.html">DMA发送</a><a href="06_usart6_双槽发送.html">两个槽</a><a href="02_usart6_无DMA收发.html">不用DMA</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
 <main>
 <section>
   <h2>1. 初始化的目标</h2>
@@ -61,7 +61,7 @@ LL_USART_ConfigAsyncMode(USART6);
 配置接收方式：RXNE中断 或 DMA接收;
 LL_USART_Enable(USART6);</div>
   <p>当前分支的 <code>USART6_LL_Init()</code> 在启用USART6之前调用 <code>USART6_LL_RxDmaInit()</code>，随后开启USART6的DMA接收请求。这样外设启用后的第一个接收字节就具备DMA搬运路径。</p>
-  <div class="callout warn"><strong>模块边界：</strong>本页完成USART6的公共基础。第二页在相同初始化基础上讲RXNE接收和轮询发送；第三、四页加入DMA接收。数据包AA 55协议属于更上层，不参与USART寄存器初始化。</div>
+  <div class="callout warn"><strong>模块边界：</strong>本页只建立 USART6 本身。下一页把收到的字节交给 DMA。数据包发送在「DMA发送」和「两个槽」。AA 55 协议不参与 USART 寄存器初始化。</div>
 </section>
-<footer>下一页：USART6无DMA接收与轮询发送</footer>
+<footer>下一页：<a href="03_usart6_DMA初始化.html">DMA初始化</a></footer>
 </main></body></html>

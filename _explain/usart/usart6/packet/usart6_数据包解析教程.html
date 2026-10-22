@@ -32,7 +32,7 @@
     <div class="badges"><span class="badge">STM32F407ZGT6</span><span class="badge">USART6：115200 8N1</span><span class="badge">DMA2 Stream1 Channel5</span><span class="badge">AA 55 | LEN | DATA | XOR</span></div>
   </div>
 </header>
-<nav><div class="wrap"><a href="../driver/01_usart6_初始化.html">串口初始化</a><a href="../driver/02_usart6_无DMA收发.html">无DMA收发</a><a href="../driver/03_usart6_DMA初始化.html">DMA初始化</a><a href="../driver/04_usart6_DMA接收与轮询发送.html">DMA接收</a><a href="../driver/05_usart6_DMA发送.html">DMA发送</a><a href="../driver/06_usart6_双槽发送.html">两个槽</a><a href="#overview">总路线</a><a href="#layers">三层职责</a><a href="#variables">变量</a><a href="#parser">解析器</a><a href="#examples">逐字节推演</a><a href="#send">发送</a><a href="#irq">中断与错误</a><a href="#test">上板测试</a><a href="#animation">动画</a></div></nav>
+<nav><div class="wrap"><a href="../driver/01_usart6_初始化.html">串口初始化</a><a href="../driver/03_usart6_DMA初始化.html">DMA初始化</a><a href="../driver/04_usart6_DMA接收与轮询发送.html">DMA接收</a><a href="../driver/05_usart6_DMA发送.html">DMA发送</a><a href="../driver/06_usart6_双槽发送.html">两个槽</a><a href="../driver/02_usart6_无DMA收发.html">不用DMA</a><a href="#overview">总路线</a><a href="#layers">三层职责</a><a href="#variables">变量</a><a href="#parser">解析器</a><a href="#examples">逐字节推演</a><a href="#send">发送</a><a href="#irq">中断与错误</a><a href="#test">上板测试</a><a href="#animation">动画</a></div></nav>
 <main>
 <section id="overview">
   <h2>1. 接收字节的完整处理路径</h2>
@@ -197,14 +197,15 @@ if (next == tail) 队列已满，丢弃这个新字节;
 
 <section id="send">
   <h2>8. <code>USART6_Packet_Send()</code> 的组帧流程</h2>
-  <p>发送函数先在局部数组 <code>frame[68]</code> 中构造完整协议帧，再把整帧交给底层发送。68来自2字节包头 + 1字节LEN + 最多64字节DATA + 1字节XOR。</p>
+  <p>协议字节写在底层槽的 <code>data[]</code> 里，不写在函数自己的临时数组上。68 是一槽的容量：2 字节包头 + 1 字节 LEN + 最多 64 字节 DATA + 1 字节 XOR。DMA 实际搬走的个数是提交时的 <code>frame_pos</code>。</p>
   <ol class="steps">
-    <li>检查参数：DATA长度为0～64；长度大于0时payload需要指向有效数据区。</li>
-    <li><code>frame_pos</code>从0开始，依次写入AA、55、LEN；每写一个字节就自增，始终指向下一个可写位置。</li>
-    <li><code>value</code>以LEN为初值；复制每个DATA到frame时，同时执行 <code>value ^= payload[index]</code>。</li>
-    <li>把最终XOR写在帧尾，然后调用 <code>USART6_LL_Send(frame, frame_pos)</code>。</li>
-    <li>底层采用TXE/TC轮询发送：等待TXE后逐字节写DR，最后等待TC确保停止位发送完成。当前发送路径未使用DMA。</li>
+    <li>检查参数：DATA 长度为 0～64；长度大于 0 时 payload 需要指向有效数据区。不合法就返回，不领槽。</li>
+    <li><code>USART6_LL_TxAlloc()</code> 领取一个空槽。<code>frame</code> 指向该槽的 <code>data[0]</code>。两个槽都占用时，任务停在这里等待。返回 0 表示这次没有槽，后面的写入不执行。</li>
+    <li><code>frame_pos</code> 从 0 开始，依次写入 AA、55、LEN；每写一个字节就自增，始终指向下一个可写位置。</li>
+    <li><code>value</code> 以 LEN 为初值；复制每个 DATA 时同时执行 <code>value ^= payload[index]</code>。校验盖住 LEN 和 DATA，不包括 AA 55。</li>
+    <li>把 XOR 写在帧尾，调用 <code>USART6_LL_TxCommit(slot_id, frame_pos)</code>。Hi 这一帧的 <code>frame_pos</code> 是 6。空包是 4，DATA 为 64 时是 68。</li>
   </ol>
+  <p><code>usart6_ll.c</code> 只按地址和长度把这块内存交给 DMA2 Stream6，不识别包头。槽的状态、<code>wr</code>、<code>rd</code> 和完成中断见 <a href="../driver/06_usart6_双槽发送.html">教程 6</a>。启动打印和 <code>printf</code> 仍走 <code>USART6_LL_SendByte()</code> 的轮询发送。</p>
 </section>
 
 <section id="irq">
@@ -222,7 +223,7 @@ if (next == tail) 队列已满，丢弃这个新字节;
     <div class="card"><p><strong>TE</strong>：DMA Transfer Error，DMA传输错误。</p><p><strong>DME</strong>：DMA Direct Mode Error，DMA关闭FIFO、使用直接模式时的错误。</p><p><strong>FE</strong>（DMA）：FIFO Error。本工程关闭FIFO，但初始化和中断中仍清除可能残留的标志。</p></div>
     <div class="card"><p><strong>ORE</strong>：USART Overrun Error，前一个字节未及时转走，新字节又到达。</p><p><strong>FE</strong>（USART）：Framing Error，停止位等帧格式异常。</p><p><strong>NE</strong>：USART Noise Error，硬件采样检测到线路噪声。协议层的“无效字节”表示字节值不符合数据包格式，两者分别属于硬件层和协议层。</p></div>
   </div>
-  <p><strong>当前实现的可观察信息：</strong>中断负责清标志、保存可用数据和恢复接收。代码未保存错误次数、发生时间和事件日志，因此运行结束后没有可供查询的历史错误记录。ISR的工作范围也不包含数据包解析、发送、printf和FreeRTOS API调用。</p>
+  <p><strong>当前实现的可观察信息：</strong>接收中断负责清标志、保存可用数据和恢复接收。代码未保存错误次数、发生时间和事件日志。接收中断里不解析、不发送、不 printf，也不调用 FreeRTOS API。发送完成中断是另一条，优先级 5，会调用 <code>xSemaphoreGiveFromISR()</code>，见教程 6。</p>
   <h3>9.3 IDLE读DR与DMA的竞态边界</h3>
   <p>STM32F4清IDLE/ORE/FE/NE要求顺序读取SR和DR。与此同时RX接收由DMA负责，读取DR的动作与DMA请求可能靠得很近。当前实现先读SR、再读DR清标志，然后依据NDTR执行Drain，这是当前代码采用的处理顺序。</p>
   <div class="callout warn">当前实现采用一次NDTR快照，适合当前实验和教学。持续满线速、高可靠场景可进一步加入短暂关闭DMA、稳定读取NDTR两次等竞态处理，并结合芯片参考手册、总线时序和压力测试完成验证。</div>

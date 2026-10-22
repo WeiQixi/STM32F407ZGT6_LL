@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>USART6 发送槽位伪代码</title>
+  <link rel="stylesheet" href="usart6_driver.css">
+  <style>
+    .code-list { margin: 12px 0; border-radius: 9px; background: var(--code); color: #e8f3ec; overflow: auto; max-height: 520px; }
+    .cline { display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 10px; padding: 2px 14px; white-space: pre; font: 13px/1.7 Consolas, "Cascadia Mono", monospace; }
+    .cline .no { color: #8aa394; text-align: right; }
+    .cline.on { background: #3d5c28; color: #fff; }
+    .board { display: grid; gap: 10px; }
+    .slot { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+    .slot b { display: block; font-size: 13px; color: var(--muted); }
+    .slot .st { font-weight: 700; }
+    .slot.fill { background: var(--blue-soft); border-color: var(--blue); }
+    .slot.ready { background: var(--amber-soft); border-color: var(--amber); }
+    .slot.send { background: var(--green-soft); border-color: var(--green); }
+    .vars { display: flex; flex-wrap: wrap; gap: 8px; }
+    .vars span { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); font: 13px/1.4 Consolas, monospace; }
+    .say { margin: 0; padding: 12px 14px; border-radius: 10px; background: var(--ink); color: #f7fbff; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+    .toolbar button { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); padding: 7px 14px; font: inherit; cursor: pointer; }
+    .toolbar button.primary { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 700; }
+    .toolbar button:disabled { opacity: .45; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>发送槽位伪代码</h1>
+  <p>这是早期草稿，用 3 个槽走例子。工程里的实现是 2 个槽，槽满时任务停在计数信号量上。和源码一致的说明见教程 6。</p>
+  <div class="badges"><span class="badge">早期草稿</span><span class="badge">3 个槽只为走例子</span><span class="badge">实现见教程 6</span></div>
+</div></header>
+<nav><div class="wrap"><a href="06_usart6_双槽发送.html">教程 6：两个槽</a></div></nav>
+<main>
+<section>
+  <h2>1. 改成槽之前的发送</h2>
+  <p>下面是改槽之前的写法：帧在函数自己的临时数组里，函数要等到 DMA 读完才返回。当前工程已经换成两个槽，这一节只用来对照。</p>
+  <div class="code">void USART6_Packet_Send(const uint8_t *payload, uint16_t len)
+{
+    uint8_t frame[68];                 /* 栈上的临时数组 */
+    /* 把 AA 55、LEN、DATA、XOR 写入 frame */
+    USART6_LL_SendDma(frame, frame_pos);
+    /* SendDma 阻塞到这块内存被 DMA 读完，函数才返回 */
+}</div>
+</section>
+
+<section>
+  <h2>2. 改成槽以后的伪代码</h2>
+  <p>槽是静态数组，函数返回后还在。<code>EMPTY</code> 空着，<code>FILL</code> 正在写入，<code>READY</code> 已经组完，<code>SEND</code> 正被 DMA 读取。DMA 只启动 <code>slot[rd]</code> 里状态已经是 <code>READY</code> 的那一槽。</p>
+  <div id="listing" class="code-list"></div>
+  <div class="callout warn">三个槽都不是 <code>EMPTY</code> 时，<code>tx_alloc()</code> 返回 -1，<code>Packet_Send()</code> 返回 0。不重试，不记日志。启动打印和 printf 仍按字节等 TXE；<code>busy == 1</code> 时继续让它们等待。</div>
+</section>
+
+<section>
+  <h2>3. 用 Hi 和 A 走一遍</h2>
+  <p>第一次发送 <code>48 69</code>，帧是 <code>AA 55 02 48 69 23</code>。DMA 还在读它时，第二次发送 <code>41</code>，帧是 <code>AA 55 01 41 40</code>。</p>
+  <p id="say" class="say"></p>
+  <div class="toolbar">
+    <button type="button" id="prev">上一步</button>
+    <button type="button" class="primary" id="play">播放</button>
+    <button type="button" id="next">下一步</button>
+    <span id="count"></span>
+  </div>
+  <div class="vars" id="vars" style="margin-top:12px"></div>
+  <div class="board" id="board" style="margin-top:12px"></div>
+</section>
+<footer>早期草稿，用 3 个槽走例子。当前工程是 2 个槽，说明见教程 6。</footer>
+</main>
+<script>
+(function () {
+  var lines = [
+    "enum { EMPTY, FILL, READY, SEND };",
+    "",
+    "static Slot slot[3];",
+    "static uint8_t wr;      /* 下一个空槽 */",
+    "static uint8_t rd;      /* DMA 要读的槽 */",
+    "static uint8_t busy;    /* 1 表示 DMA 正在读 slot[rd] */",
+    "",
+    "int USART6_Packet_Send(const uint8_t *payload, uint16_t len)",
+    "{",
+    "    int id;",
+    "    if ((payload == 0 && len != 0) || len > 64) return 0;",
+    "",
+    "    id = tx_alloc();            /* 先占用一个 EMPTY 槽 */",
+    "    if (id < 0) return 0;",
+    "",
+    "    /* 字节直接写入这个槽 */",
+    "    slot[id].data[0] = 0xAA;",
+    "    slot[id].data[1] = 0x55;",
+    "    slot[id].data[2] = (uint8_t)len;",
+    "    xor = (uint8_t)len;",
+    "    for (i = 0; i < len; i++) {",
+    "        slot[id].data[3 + i] = payload[i];",
+    "        xor ^= payload[i];",
+    "    }",
+    "    slot[id].data[3 + len] = xor;",
+    "    slot[id].len = 4 + len;     /* 2 字节头 + LEN + DATA + XOR */",
+    "    slot[id].state = READY;",
+    "",
+    "    tx_kick();",
+    "    return 1;",
+    "}",
+    "",
+    "static int tx_alloc(void)",
+    "{",
+    "    int id;",
+    "    taskENTER_CRITICAL();",
+    "    if (slot[wr].state != EMPTY) {",
+    "        taskEXIT_CRITICAL();",
+    "        return -1;",
+    "    }",
+    "    id = wr;",
+    "    slot[id].state = FILL;",
+    "    wr = (wr + 1) % 3;",
+    "    taskEXIT_CRITICAL();",
+    "    return id;",
+    "}",
+    "",
+    "static void tx_kick(void)",
+    "{",
+    "    taskENTER_CRITICAL();",
+    "    if (busy || slot[rd].state != READY) {",
+    "        taskEXIT_CRITICAL();",
+    "        return;",
+    "    }",
+    "    slot[rd].state = SEND;",
+    "    busy = 1;",
+    "    设置 DMA 地址 = slot[rd].data;",
+    "    设置 DMA 长度 = slot[rd].len;",
+    "    开启 Stream6;",
+    "    taskEXIT_CRITICAL();",
+    "}",
+    "",
+    "void USART6_LL_DmaTxIRQHandler(void)",
+    "{",
+    "    slot[rd].state = EMPTY;",
+    "    slot[rd].len = 0;",
+    "    rd = (rd + 1) % 3;",
+    "    busy = 0;",
+    "    tx_kick();",
+    "}"
+  ];
+
+  var HI = "AA 55 02 48 69 23";
+  var A = "AA 55 01 41 40";
+  var steps = [
+    { say: "开始前三个槽都是空的，DMA 没有在读。", lines: [3, 4, 5], wr: 0, rd: 0, busy: 0, wire: "空闲",
+      slots: [["空", ""], ["空", ""], ["空", ""]] },
+    { say: "发送 Hi。tx_alloc 把槽 0 标成 FILL，wr 挪到槽 1。", lines: [12, 40, 41, 42], wr: 1, rd: 0, busy: 0, wire: "空闲",
+      slots: [["正在写", ""], ["空", ""], ["空", ""]] },
+    { say: "AA 55 02 48 69 23 写进槽 0，状态改成 READY。DMA 还没启动。", lines: [16, 17, 18, 24, 25, 26], wr: 1, rd: 0, busy: 0, wire: "空闲",
+      slots: [["可发送", HI], ["空", ""], ["空", ""]] },
+    { say: "busy 为 0，槽 0 已是 READY。tx_kick 把它改成 SEND，DMA 指向槽 0，长度 6。", lines: [28, 54, 55, 56, 57, 58], wr: 1, rd: 0, busy: 1, wire: HI,
+      slots: [["DMA 正在读", HI], ["空", ""], ["空", ""]] },
+    { say: "Packet_Send 执行 return 1。调用结束，槽 0 仍留给 DMA 读。", lines: [29], wr: 1, rd: 0, busy: 1, wire: HI,
+      slots: [["DMA 正在读", HI], ["空", ""], ["空", ""]] },
+    { say: "接着发送 A。槽 0 还是 SEND。tx_alloc 把槽 1 标成 FILL。", lines: [12, 41, 42], wr: 2, rd: 0, busy: 1, wire: HI,
+      slots: [["DMA 正在读", HI], ["正在写", ""], ["空", ""]] },
+    { say: "AA 55 01 41 40 写进槽 1，状态改成 READY。", lines: [16, 24, 25, 26], wr: 2, rd: 0, busy: 1, wire: HI,
+      slots: [["DMA 正在读", HI], ["可发送", A], ["空", ""]] },
+    { say: "tx_kick 看到 busy 已经是 1，立刻 return。槽 1 留在 READY。", lines: [50, 52], wr: 2, rd: 0, busy: 1, wire: HI,
+      slots: [["DMA 正在读", HI], ["可发送", A], ["空", ""]] },
+    { say: "第二次 Packet_Send 也 return 1。Hi 还在发出，A 已经躺在槽 1。", lines: [29], wr: 2, rd: 0, busy: 1, wire: HI,
+      slots: [["DMA 正在读", HI], ["可发送", A], ["空", ""]] },
+    { say: "DMA 完成中断把槽 0 清空，rd 挪到槽 1，busy 清 0。下一行才去调用 tx_kick。", lines: [64, 65, 66, 67, 68], wr: 2, rd: 1, busy: 0, wire: "槽 0 已读完",
+      slots: [["空", ""], ["可发送", A], ["空", ""]] },
+    { say: "槽 1 是 READY，所以改成 SEND。DMA 地址改到槽 1，长度 5。", lines: [54, 55, 56, 57, 58], wr: 2, rd: 1, busy: 1, wire: A,
+      slots: [["空", ""], ["DMA 正在读", A], ["空", ""]] },
+    { say: "槽 1 也读完。后面没有 READY 的槽，tx_kick 看到状态不是 READY，直接返回。", lines: [64, 66, 67, 50, 52], wr: 2, rd: 2, busy: 0, wire: "两帧都已读完",
+      slots: [["空", ""], ["空", ""], ["空", ""]] }
+  ];
+
+  var listing = document.getElementById("listing");
+  var nodes = [];
+  lines.forEach(function (text, index) {
+    var row = document.createElement("div");
+    var no = document.createElement("span");
+    var body = document.createElement("span");
+    row.className = "cline";
+    no.className = "no";
+    no.textContent = String(index + 1);
+    body.textContent = text.length ? text : " ";
+    row.appendChild(no);
+    row.appendChild(body);
+    listing.appendChild(row);
+    nodes.push(row);
+  });
+
+  var index = 0;
+  var timer = 0;
+  var say = document.getElementById("say");
+  var vars = document.getElementById("vars");
+  var board = document.getElementById("board");
+  var count = document.getElementById("count");
+  var prev = document.getElementById("prev");
+  var next = document.getElementById("next");
+  var play = document.getElementById("play");
+  var css = ["", "fill", "ready", "send"];
+
+  function stop() {
+    if (timer) {
+      window.clearInterval(timer);
+      timer = 0;
+    }
+    play.textContent = "播放";
+  }
+
+  function render(nextIndex) {
+    var step = steps[nextIndex];
+    var mark = {};
+    var i;
+    index = nextIndex;
+    step.lines.forEach(function (n) { mark[n] = 1; });
+    nodes.forEach(function (node, n) {
+      node.className = mark[n] ? "cline on" : "cline";
+    });
+    if (step.lines.length) nodes[step.lines[0]].scrollIntoView({ block: "nearest" });
+    say.textContent = step.say;
+    vars.textContent = "";
+    ["wr = " + step.wr, "rd = " + step.rd, "busy = " + step.busy, "PC6  " + step.wire].forEach(function (text) {
+      var chip = document.createElement("span");
+      chip.textContent = text;
+      vars.appendChild(chip);
+    });
+    board.textContent = "";
+    for (i = 0; i < 3; i += 1) {
+      var card = document.createElement("div");
+      var name = document.createElement("b");
+      var state = document.createElement("div");
+      var bytes = document.createElement("code");
+      var kind = step.slots[i][0];
+      card.className = "slot" + (kind === "正在写" ? " fill" : kind === "可发送" ? " ready" : kind === "DMA 正在读" ? " send" : "");
+      name.textContent = "槽 " + i + (i === step.rd ? "    rd" : "") + (i === step.wr ? "    wr" : "");
+      state.className = "st";
+      state.textContent = kind;
+      bytes.textContent = step.slots[i][1] || "—";
+      card.appendChild(name);
+      card.appendChild(state);
+      card.appendChild(bytes);
+      board.appendChild(card);
+    }
+    count.textContent = (index + 1) + " / " + steps.length;
+    prev.disabled = index === 0;
+    next.disabled = index === steps.length - 1;
+  }
+
+  prev.addEventListener("click", function () {
+    stop();
+    if (index > 0) render(index - 1);
+  });
+  next.addEventListener("click", function () {
+    stop();
+    if (index < steps.length - 1) render(index + 1);
+  });
+  play.addEventListener("click", function () {
+    if (timer) {
+      stop();
+      return;
+    }
+    if (index >= steps.length - 1) render(0);
+    play.textContent = "暂停";
+    timer = window.setInterval(function () {
+      if (index >= steps.length - 1) {
+        stop();
+        return;
+      }
+      render(index + 1);
+      if (index >= steps.length - 1) stop();
+    }, 1400);
+  });
+
+  render(0);
+})();
+</script>
+</body>
+</html>

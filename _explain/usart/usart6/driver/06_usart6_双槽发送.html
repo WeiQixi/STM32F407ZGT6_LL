@@ -10,13 +10,23 @@
   <p>按源码把一次发送走完：<code>USART6_Packet_Send()</code> 组帧，<code>USART6_LL_TxAlloc()</code> 领槽，<code>USART6_LL_TxCommit()</code> 提交，<code>USART6_LL_TxKick()</code> 打开 DMA，完成中断再换下一个槽。</p>
   <div class="badges"><span class="badge">Packet_Send</span><span class="badge">TxAlloc / TxCommit</span><span class="badge">TxKick</span><span class="badge">Stream6 完成中断</span></div>
 </div></header>
-<nav><div class="wrap"><a href="01_usart6_初始化.html">1 初始化</a><a href="02_usart6_无DMA收发.html">2 无DMA收发</a><a href="03_usart6_DMA初始化.html">3 DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">4 DMA接收</a><a href="05_usart6_DMA发送.html">5 DMA发送</a><a class="current" href="06_usart6_双槽发送.html">6 两个槽</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
+<nav><div class="wrap"><a href="01_usart6_初始化.html">1 初始化</a><a href="03_usart6_DMA初始化.html">DMA初始化</a><a href="04_usart6_DMA接收与轮询发送.html">DMA接收</a><a href="05_usart6_DMA发送.html">DMA发送</a><a class="current" href="06_usart6_双槽发送.html">两个槽</a><a href="02_usart6_无DMA收发.html">不用DMA</a><a href="../packet/usart6_数据包解析教程.html">数据包协议</a></div></nav>
 <main>
 <section>
   <h2>1. 一次发送先经过哪些函数</h2>
   <div class="path"><div class="node"><strong>组帧</strong><code>USART6_Packet_Send()</code></div><div class="arrow">→</div><div class="node"><strong>领槽</strong><code>USART6_LL_TxAlloc()</code></div><div class="arrow">→</div><div class="node"><strong>提交</strong><code>USART6_LL_TxCommit()</code></div><div class="arrow">→</div><div class="node"><strong>启动</strong><code>USART6_LL_TxKick()</code></div><div class="arrow">→</div><div class="node"><strong>完成</strong><code>USART6_LL_DmaTxIRQHandler()</code></div></div>
   <p>协议字节由 <code>USART6_Packet_Send()</code> 写入槽的 <code>data[]</code>。<code>usart6_ll.c</code> 只按地址和长度把这块内存交给 DMA2 Stream6。回显任务在 <code>USART6_Packet_Read()</code> 取出一帧 DATA 之后，调用 <code>USART6_Packet_Send(payload, length)</code>。</p>
   <p>槽是静态数组 <code>usart6_tx_slot[2]</code>。每个元素里有 <code>data[68]</code>、<code>len</code> 和 <code>state</code>。68 是这一槽最多能装的字节数，DMA 实际搬走的个数是提交时写下的 <code>len</code>。</p>
+  <div class="callout"><strong>为什么是两个槽：</strong>DMA 正在读某一块内存时，CPU 不能改这一块。只有一个槽时，下一帧必须等 DMA 把这一块读完。两个槽时，DMA 读槽 0，另一帧可以写进槽 1。</div>
+  <table><thead><tr><th>名字</th><th>含义</th></tr></thead><tbody>
+    <tr><td><code>EMPTY</code></td><td>空槽，可以领取</td></tr>
+    <tr><td><code>FILL</code></td><td>任务正在往 <code>data[]</code> 里写，DMA 不读</td></tr>
+    <tr><td><code>READY</code></td><td>字节已经写完，等待 DMA 来取</td></tr>
+    <tr><td><code>SEND</code></td><td>DMA 正在读这个槽</td></tr>
+    <tr><td><code>wr</code></td><td>下次领取的槽号。上电为 0，在 0 和 1 之间轮换</td></tr>
+    <tr><td><code>rd</code></td><td>DMA 正在读或下次要读的槽号。上电为 0</td></tr>
+    <tr><td><code>usart6_tx_free</code></td><td>空槽个数，计数信号量，初值 2</td></tr>
+  </tbody></table>
 </section>
 <section>
   <h2>2. Packet_Send：把 Hi 写成 6 个字节</h2>
@@ -155,5 +165,5 @@ portYIELD_FROM_ISR(higher_priority_task_woken);</div>
   <p><code>USART6_LL_Send()</code> 对数组里的每个字节调用一次 <code>SendByte()</code>，全部返回后再等一次 USART TC。启动信息使用这个函数。</p>
   <div class="callout warn">完成中断负责把 <code>busy</code> 清 0。调用 <code>SendByte()</code> 的代码若停在把优先级 5 挡住的临界区里，或者直接停在 Stream6 的中断函数里，完成中断进不来，<code>while(busy)</code> 就一直等下去。</div>
 </section>
-<footer>双槽发送的代码已写入工程，尚未重新编译，也没有上板。TE 或 DME 与 TC 一样释放当前槽，该帧不重发。</footer>
+<footer>双槽发送已上板测试。TE 或 DME 与 TC 一样释放当前槽，该帧不重发。</footer>
 </main></body></html>

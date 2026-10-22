@@ -19,10 +19,6 @@
 
 #define USART6_LL_BAUD_RATE            115200U
 
-static void USART6_LL_RxDmaInit(void);
-static void USART6_LL_TxDmaInit(void);
-static void USART6_LL_TxFreeInit(void);
-
 /**
  * @brief 配置PC6为USART6_TX，PC7为USART6_RX。
  */
@@ -47,71 +43,7 @@ static void USART6_LL_GPIO_Init(void){
     LL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 }
 
-/**
- * @brief 初始化GPIO、USART6、DMA收发和NVIC中断。
- *
- * USART6配置为115200、8N1；RX使用DMA2 Stream1 Channel5循环模式，
- * TX使用DMA2 Stream6 Channel5普通模式。
- */
-void USART6_LL_Init(void){
-    LL_USART_InitTypeDef usart = {0};
-
-    USART6_LL_GPIO_Init();
-
-    LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_USART6);
-    LL_APB2_GRP1_ForceReset(LL_APB2_GRP1_PERIPH_USART6);
-    LL_APB2_GRP1_ReleaseReset(LL_APB2_GRP1_PERIPH_USART6);
-
-    LL_USART_ConfigAsyncMode(USART6);
-
-    usart.BaudRate = USART6_LL_BAUD_RATE;
-    usart.DataWidth = LL_USART_DATAWIDTH_8B;
-    usart.StopBits = LL_USART_STOPBITS_1;
-    usart.Parity = LL_USART_PARITY_NONE;
-    usart.TransferDirection = LL_USART_DIRECTION_TX_RX;
-    usart.HardwareFlowControl = LL_USART_HWCONTROL_NONE;
-    usart.OverSampling = LL_USART_OVERSAMPLING_16;
-
-    LL_USART_Init(USART6, &usart);
-
-    /*
-     * 先配置并启动 DMA，再打开 USART6 的 DMA 接收请求。
-     * 这样 USART6 启用后，收到的第一个字节就可以由 DMA 自动搬运，
-     * 不再为每个字节进入一次 RXNE 中断。
-     */
-    USART6_LL_RxDmaInit();
-    USART6_LL_TxDmaInit();
-    USART6_LL_TxFreeInit();
-    LL_USART_EnableDMAReq_RX(USART6);
-    LL_USART_EnableDMAReq_TX(USART6);
-    LL_USART_Enable(USART6);
-
-    /* 清除初始化阶段可能残留的 IDLE，避免启用中断后立即误触发。 */
-    LL_USART_ClearFlag_IDLE(USART6);
-
-    /* 两个中断都不调用 FreeRTOS API。优先级设为 4，高于当前
-     * configMAX_SYSCALL_INTERRUPT_PRIORITY 对应的 5，避免 IDLE 清标志
-     * 被 FreeRTOS 临界区长时间推迟。两者同级，不能互相抢占。 */
-    HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 4, 0);
-    HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
-    HAL_NVIC_SetPriority(USART6_IRQn, 4, 0);
-    HAL_NVIC_EnableIRQ(USART6_IRQn);
-
-    /*
-     * TX DMA完成中断会调用FreeRTOS的FromISR信号量接口，优先级必须是
-     * configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY允许的5或更低。
-     */
-    HAL_NVIC_SetPriority(DMA2_Stream6_IRQn, 5, 0);
-    HAL_NVIC_EnableIRQ(DMA2_Stream6_IRQn);
-
-    /* IDLE 用来及时提交不足半个 DMA 缓冲区的短数据。 */
-    LL_USART_EnableIT_IDLE(USART6);
-    /* DMA 接收模式下，EIE 负责报告 ORE、FE 和 NE。 */
-    LL_USART_EnableIT_ERROR(USART6);
-}
-
-
-/* ---------- 发送槽和 TX DMA ---------- */
+/* ---------- 发送槽变量和 TX DMA 初始化 ---------- */
 
 enum {
     USART6_TX_EMPTY = 0, /* 空槽，可以领取 */
@@ -187,6 +119,168 @@ static void USART6_LL_TxDmaInit(void){
     LL_DMA_EnableIT_TE(DMA2, LL_DMA_STREAM_6);
     LL_DMA_EnableIT_DME(DMA2, LL_DMA_STREAM_6);
 }
+
+/* DMA写入循环缓冲区；软件从usart6_dma_rx_pos开始读取新增字节。 */
+static volatile uint8_t usart6_dma_rx_buf[USART6_RX_BUF_SIZE];
+static uint16_t usart6_dma_rx_pos;
+
+/**
+ * @brief 配置并启动USART6_RX的DMA循环接收。
+ *
+ * 固定映射为DMA2 Stream1 Channel5，启用HT、TC、TE和DME中断。
+ */
+static void USART6_LL_RxDmaInit(void){
+    /* DMA2 属于 AHB1 外设，配置任何 DMA2 寄存器前必须先打开时钟。 */
+    LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA2);
+
+    /*
+     * F4 只有在 Stream 的 EN 位清零后，才允许修改通道、地址和 NDTR。
+     * 先发出禁用命令，再等待硬件确认 Stream1 已经真正停止。
+     */
+    LL_DMA_DisableStream(DMA2, LL_DMA_STREAM_1);
+    while(LL_DMA_IsEnabledStream(DMA2, LL_DMA_STREAM_1)){
+        /* 正常只等待很短时间；EN 没清零前不能继续改配置。 */
+    }
+
+    /*
+     * STM32F407 数据手册规定：
+     * USART6_RX 可以映射到 DMA2 Stream1 Channel5。
+     * Stream 决定使用哪组寄存器，Channel 决定请求来自哪个外设。
+     */
+    LL_DMA_SetChannelSelection(DMA2, LL_DMA_STREAM_1, LL_DMA_CHANNEL_5);
+
+    /*
+     * 配置整条传输：
+     * PERIPH_TO_MEMORY：从 USART6->DR 搬到内存；
+     * CIRCULAR：搬满 256 字节后自动从缓冲区开头继续；
+     * PERIPH_NOINCREMENT：外设地址永远是同一个 DR；
+     * MEMORY_INCREMENT：每收到一个字节，内存地址加 1；
+     * PDATAALIGN_BYTE / MDATAALIGN_BYTE：两端都按 8 位字节传输；
+     * PRIORITY_HIGH：DMA 仲裁优先级设为高。
+     */
+    LL_DMA_ConfigTransfer(DMA2, LL_DMA_STREAM_1,
+                          LL_DMA_DIRECTION_PERIPH_TO_MEMORY |
+                          LL_DMA_MODE_CIRCULAR |
+                          LL_DMA_PERIPH_NOINCREMENT |
+                          LL_DMA_MEMORY_INCREMENT |
+                          LL_DMA_PDATAALIGN_BYTE |
+                          LL_DMA_MDATAALIGN_BYTE |
+                          LL_DMA_PRIORITY_HIGH);
+
+    /*
+     * 关闭 DMA FIFO，使用直接模式。
+     * USART6 每次只产生一个字节的 DMA 请求，直接模式已经足够。
+     */
+    LL_DMA_DisableFifoMode(DMA2, LL_DMA_STREAM_1);
+
+    /*
+     * 配置源地址和目标地址：
+     * 源地址是 USART6 数据寄存器 DR，固定不变；
+     * 目标地址是 256 字节 DMA 循环缓冲区的首地址。
+     */
+    LL_DMA_ConfigAddresses(DMA2, LL_DMA_STREAM_1,
+                           (uint32_t)&USART6->DR,
+                           (uint32_t)usart6_dma_rx_buf,
+                           LL_DMA_DIRECTION_PERIPH_TO_MEMORY);
+
+    /*
+     * NDTR 初值设为 256，表示本轮需要搬运 256 个字节。
+     * 循环模式下 NDTR 递减到 0 后，硬件会自动重新装载为 256。
+     */
+    LL_DMA_SetDataLength(DMA2, LL_DMA_STREAM_1, USART6_RX_BUF_SIZE);
+
+    /*
+     * 启动前清除 Stream1 的全部旧状态：
+     * HT=半传输，TC=传输完成，TE=传输错误，
+     * DME=直接模式错误，FE=FIFO 错误。
+     */
+    LL_DMA_ClearFlag_HT1(DMA2);
+    LL_DMA_ClearFlag_TC1(DMA2);
+    LL_DMA_ClearFlag_TE1(DMA2);
+    LL_DMA_ClearFlag_DME1(DMA2);
+    LL_DMA_ClearFlag_FE1(DMA2);
+
+    /* 软件还没有处理 DMA 缓冲区中的任何字节，所以从下标 0 开始。 */
+    usart6_dma_rx_pos = 0U;
+
+    /*
+     * HT：DMA 写完前 128 字节时进入中断，及时保护前半区数据；
+     * TC：DMA 写完后 128 字节时进入中断，然后自动开始下一轮；
+     * TE/DME：发生传输错误或直接模式错误时进入中断并执行恢复。
+     */
+    LL_DMA_EnableIT_HT(DMA2, LL_DMA_STREAM_1);
+    LL_DMA_EnableIT_TC(DMA2, LL_DMA_STREAM_1);
+    LL_DMA_EnableIT_TE(DMA2, LL_DMA_STREAM_1);
+    LL_DMA_EnableIT_DME(DMA2, LL_DMA_STREAM_1);
+
+    /* 地址、长度、模式和中断都准备好以后，最后才启动 Stream1。 */
+    LL_DMA_EnableStream(DMA2, LL_DMA_STREAM_1);
+}
+
+/**
+ * @brief 初始化GPIO、USART6、DMA收发和NVIC中断。
+ *
+ * USART6配置为115200、8N1；RX使用DMA2 Stream1 Channel5循环模式，
+ * TX使用DMA2 Stream6 Channel5普通模式。
+ */
+void USART6_LL_Init(void){
+    LL_USART_InitTypeDef usart = {0};
+
+    USART6_LL_GPIO_Init();
+
+    LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_USART6);
+    LL_APB2_GRP1_ForceReset(LL_APB2_GRP1_PERIPH_USART6);
+    LL_APB2_GRP1_ReleaseReset(LL_APB2_GRP1_PERIPH_USART6);
+
+    LL_USART_ConfigAsyncMode(USART6);
+
+    usart.BaudRate = USART6_LL_BAUD_RATE;
+    usart.DataWidth = LL_USART_DATAWIDTH_8B;
+    usart.StopBits = LL_USART_STOPBITS_1;
+    usart.Parity = LL_USART_PARITY_NONE;
+    usart.TransferDirection = LL_USART_DIRECTION_TX_RX;
+    usart.HardwareFlowControl = LL_USART_HWCONTROL_NONE;
+    usart.OverSampling = LL_USART_OVERSAMPLING_16;
+
+    LL_USART_Init(USART6, &usart);
+
+    /*
+     * 先配置并启动 DMA，再打开 USART6 的 DMA 接收请求。
+     * 这样 USART6 启用后，收到的第一个字节就可以由 DMA 自动搬运，
+     * 不再为每个字节进入一次 RXNE 中断。
+     */
+    USART6_LL_RxDmaInit();
+    USART6_LL_TxDmaInit();
+    USART6_LL_TxFreeInit();
+    LL_USART_EnableDMAReq_RX(USART6);
+    LL_USART_EnableDMAReq_TX(USART6);
+    LL_USART_Enable(USART6);
+
+    /* 清除初始化阶段可能残留的 IDLE，避免启用中断后立即误触发。 */
+    LL_USART_ClearFlag_IDLE(USART6);
+
+    /* 两个中断都不调用 FreeRTOS API。优先级设为 4，高于当前
+     * configMAX_SYSCALL_INTERRUPT_PRIORITY 对应的 5，避免 IDLE 清标志
+     * 被 FreeRTOS 临界区长时间推迟。两者同级，不能互相抢占。 */
+    HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 4, 0);
+    HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
+    HAL_NVIC_SetPriority(USART6_IRQn, 4, 0);
+    HAL_NVIC_EnableIRQ(USART6_IRQn);
+
+    /*
+     * TX DMA完成中断会调用FreeRTOS的FromISR信号量接口，优先级必须是
+     * configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY允许的5或更低。
+     */
+    HAL_NVIC_SetPriority(DMA2_Stream6_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(DMA2_Stream6_IRQn);
+
+    /* IDLE 用来及时提交不足半个 DMA 缓冲区的短数据。 */
+    LL_USART_EnableIT_IDLE(USART6);
+    /* DMA 接收模式下，EIE 负责报告 ORE、FE 和 NE。 */
+    LL_USART_EnableIT_ERROR(USART6);
+}
+
+/* ---------- 领取、提交和完成中断 ---------- */
 
 /**
  * @brief 若rd指向的槽已组完且DMA空闲，则启动Stream6。
@@ -382,16 +476,12 @@ int fputc(int ch, FILE *f){
 }
 
 
-/* ---------- 接收队列和 RX DMA ---------- */
+/* ---------- 接收队列和接收中断 ---------- */
 
 /* 软件接收队列：head指向下一写入位置，tail指向第一未处理字节。 */
 static uint8_t usart6_rx_buf[USART6_RX_BUF_SIZE];
 static volatile uint16_t usart6_rx_head;
 static volatile uint16_t usart6_rx_tail;
-
-/* DMA写入循环缓冲区；软件从usart6_dma_rx_pos开始读取新增字节。 */
-static volatile uint8_t usart6_dma_rx_buf[USART6_RX_BUF_SIZE];
-static uint16_t usart6_dma_rx_pos;
 
 /**
  * @brief 将一个字节追加到软件接收队列。
@@ -426,99 +516,6 @@ static void USART6_LL_RxDmaDrain(void){
         usart6_dma_rx_pos =
             (uint16_t)((usart6_dma_rx_pos + 1U) & USART6_RX_MASK);
     }
-}
-
-/**
- * @brief 配置并启动USART6_RX的DMA循环接收。
- *
- * 固定映射为DMA2 Stream1 Channel5，启用HT、TC、TE和DME中断。
- */
-static void USART6_LL_RxDmaInit(void){
-    /* DMA2 属于 AHB1 外设，配置任何 DMA2 寄存器前必须先打开时钟。 */
-    LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA2);
-
-    /*
-     * F4 只有在 Stream 的 EN 位清零后，才允许修改通道、地址和 NDTR。
-     * 先发出禁用命令，再等待硬件确认 Stream1 已经真正停止。
-     */
-    LL_DMA_DisableStream(DMA2, LL_DMA_STREAM_1);
-    while(LL_DMA_IsEnabledStream(DMA2, LL_DMA_STREAM_1)){
-        /* 正常只等待很短时间；EN 没清零前不能继续改配置。 */
-    }
-
-    /*
-     * STM32F407 数据手册规定：
-     * USART6_RX 可以映射到 DMA2 Stream1 Channel5。
-     * Stream 决定使用哪组寄存器，Channel 决定请求来自哪个外设。
-     */
-    LL_DMA_SetChannelSelection(DMA2, LL_DMA_STREAM_1, LL_DMA_CHANNEL_5);
-
-    /*
-     * 配置整条传输：
-     * PERIPH_TO_MEMORY：从 USART6->DR 搬到内存；
-     * CIRCULAR：搬满 256 字节后自动从缓冲区开头继续；
-     * PERIPH_NOINCREMENT：外设地址永远是同一个 DR；
-     * MEMORY_INCREMENT：每收到一个字节，内存地址加 1；
-     * PDATAALIGN_BYTE / MDATAALIGN_BYTE：两端都按 8 位字节传输；
-     * PRIORITY_HIGH：DMA 仲裁优先级设为高。
-     */
-    LL_DMA_ConfigTransfer(DMA2, LL_DMA_STREAM_1,
-                          LL_DMA_DIRECTION_PERIPH_TO_MEMORY |
-                          LL_DMA_MODE_CIRCULAR |
-                          LL_DMA_PERIPH_NOINCREMENT |
-                          LL_DMA_MEMORY_INCREMENT |
-                          LL_DMA_PDATAALIGN_BYTE |
-                          LL_DMA_MDATAALIGN_BYTE |
-                          LL_DMA_PRIORITY_HIGH);
-
-    /*
-     * 关闭 DMA FIFO，使用直接模式。
-     * USART6 每次只产生一个字节的 DMA 请求，直接模式已经足够。
-     */
-    LL_DMA_DisableFifoMode(DMA2, LL_DMA_STREAM_1);
-
-    /*
-     * 配置源地址和目标地址：
-     * 源地址是 USART6 数据寄存器 DR，固定不变；
-     * 目标地址是 256 字节 DMA 循环缓冲区的首地址。
-     */
-    LL_DMA_ConfigAddresses(DMA2, LL_DMA_STREAM_1,
-                           (uint32_t)&USART6->DR,
-                           (uint32_t)usart6_dma_rx_buf,
-                           LL_DMA_DIRECTION_PERIPH_TO_MEMORY);
-
-    /*
-     * NDTR 初值设为 256，表示本轮需要搬运 256 个字节。
-     * 循环模式下 NDTR 递减到 0 后，硬件会自动重新装载为 256。
-     */
-    LL_DMA_SetDataLength(DMA2, LL_DMA_STREAM_1, USART6_RX_BUF_SIZE);
-
-    /*
-     * 启动前清除 Stream1 的全部旧状态：
-     * HT=半传输，TC=传输完成，TE=传输错误，
-     * DME=直接模式错误，FE=FIFO 错误。
-     */
-    LL_DMA_ClearFlag_HT1(DMA2);
-    LL_DMA_ClearFlag_TC1(DMA2);
-    LL_DMA_ClearFlag_TE1(DMA2);
-    LL_DMA_ClearFlag_DME1(DMA2);
-    LL_DMA_ClearFlag_FE1(DMA2);
-
-    /* 软件还没有处理 DMA 缓冲区中的任何字节，所以从下标 0 开始。 */
-    usart6_dma_rx_pos = 0U;
-
-    /*
-     * HT：DMA 写完前 128 字节时进入中断，及时保护前半区数据；
-     * TC：DMA 写完后 128 字节时进入中断，然后自动开始下一轮；
-     * TE/DME：发生传输错误或直接模式错误时进入中断并执行恢复。
-     */
-    LL_DMA_EnableIT_HT(DMA2, LL_DMA_STREAM_1);
-    LL_DMA_EnableIT_TC(DMA2, LL_DMA_STREAM_1);
-    LL_DMA_EnableIT_TE(DMA2, LL_DMA_STREAM_1);
-    LL_DMA_EnableIT_DME(DMA2, LL_DMA_STREAM_1);
-
-    /* 地址、长度、模式和中断都准备好以后，最后才启动 Stream1。 */
-    LL_DMA_EnableStream(DMA2, LL_DMA_STREAM_1);
 }
 
 /**
